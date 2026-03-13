@@ -379,3 +379,5 @@ class State(MessagesState):
     leave_status: Optional[dict]
     visualization_image: Optional[str]
     visualization_analysis: Optional[str]
+
+    # dff
