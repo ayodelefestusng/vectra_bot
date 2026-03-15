@@ -35,7 +35,6 @@ from langchain_core.messages import (
     AIMessage, HumanMessage, SystemMessage, ToolMessage
 )
 from langchain_core.runnables import RunnableConfig
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_community.document_loaders import (
     PyPDFLoader, TextLoader, CSVLoader, UnstructuredFileLoader
 )
@@ -43,94 +42,15 @@ from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.graph import END, START, StateGraph
 from langgraph.checkpoint.postgres import PostgresSaver
-from langchain.chat_models import init_chat_model
 from langchain.agents.structured_output import ToolStrategy
     
 from langchain.agents import create_agent
 # Local Imports
 from .database import SessionLocal
-from .ollama_service import OllamaService, OllamaCloudWrapper
 from .base import State, Answer, Context, ResponseFormat
 from .logger_utils import log_info, log_error, log_debug, log_warning, logger
-# from llm_handler import get_model
 from .tools import tools, init_sql_agent,trim_messages
-# from .llm_handler import get_model
-OLLAMA_BASE_URL = "https://ai.notchhr.io/api/chat/local"
-OLLAMA_USERNAME = "ai-user"
-OLLAMA_PASSWORD = "x2GS7jEF@#2T"
-OLLAMA_MODEL = "gpt-oss-safeguard:20b"
-GEMINI_INIT= os.getenv("GEMINI_INIT", "google_genai:gemini-flash-latest")
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "https://ollama.com")
-OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "")
-
-# Constants / Fallbacks
-# OLLAMA_BASE_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
-# DEFAULT_AGENT_PROMPT = 
-llm_fallback = init_chat_model(GEMINI_INIT, temperature=0)
-model = llm_fallback  # Consistent naming for the primary LLM
-_llm = None
-def get_llm_instance(llm_config=None):
-    """
-    Returns an LLM instance based on the provided configuration or global DB setting.
-    
-    Supported LLM types:
-    - gemini: Google Gemini API
-    - ollama: Local Ollama instance
-    - ollama_cloud: Ollama Cloud API (requires OLLAMA_API_KEY)
-    """
-    # If explicit config passed, use it. Otherwise fetch global if needed.
-    # Note: 'llm_config' here is expected to be a Django ORM object or None.
-    with SessionLocal() as session:
-        sql = "SELECT name, model FROM customer_llm LIMIT 1"
-        res = session.execute(text(sql)).fetchone()
-        
-        # If no config is found in the DB, default to a safe fallback
-        if not res:
-            logger.warning("No LLM config found in DB, defaulting to Gemini.")
-            return ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=os.getenv("GOOGLE_API_KEY"))
-        
-        name = res[0].lower() if res[0] else "gemini"
-        model_name = res[1] or "gemini-1.5-flash"
-        
-        if "gemini" in name:
-            return ChatGoogleGenerativeAI(model=model_name, api_key=os.getenv("GOOGLE_API_KEY"), temperature=0)
-            
-        elif "ollama" in name:
-            # Initialize OllamaService without local network parameters
-            return OllamaService(model=model_name)
-            # return OllamaCloudWrapper(
-            #     model_name=model_name,
-            #     host=os.getenv("OLLAMA_HOST", "https://ollama.com"),
-            #     api_key=os.getenv("OLLAMA_API_KEY", "")
-            # )
-            
-    return ChatGoogleGenerativeAI(model="gemini-1.5-flash", api_key=os.getenv("GOOGLE_API_KEY"), temperature=0)
-
-def get_model():
-    """
-    Lazy-loads the model and binds tools only when needed.
-    """
-    global _llm
-    
-    if _llm is not None:
-        return _llm
-
-    try:
-        base_llm = get_llm_instance()
-        
-        if base_llm is not None:
-            # Replaced with standardized tool list
-            # from .tools import tools
-            _llm = base_llm.bind_tools(tools)
-            logger.info("✅ Model and tools initialized successfully.")
-            return base_llm
-        else:
-            logger.error("❌ Failed to initialize base LLM.")
-            return None
-    except Exception as e:
-        logger.error(f"❌ Error initializing model/tools: {e}")
-        return None
-
+from .llm_handler import get_model,get_embeddings,get_llm_instance
 
 
 # def get_llm_instance(llm_config=None):
@@ -395,7 +315,7 @@ GLOBAL_FINAL_ANSWER_PROMPTv13032026 = """
     IMPORTANT: If a tool is required by a protocol, call it using the native tool calling mechanism. DO NOT manually output tool calling JSON in the 'answer' field or as text. Tool calls are NOT considered 'text outside the JSON block'.
         """
 
-GLOBAL_FINAL_ANSWER_PROMPT = """
+GLOBAL_FINAL_ANSWER_PROMPT15032026 = """
     You are Victoria, the AI-powered virtual assistant for Gatik. Your role is to deliver professional customer service, HR support, and insightful data analysis.
     
     ### SCOPE OF ASSISTANCE (MANDATORY):
@@ -450,7 +370,73 @@ GLOBAL_FINAL_ANSWER_PROMPT = """
     - Current Date: {current_date_str}
     - Employee ID: {ID}
     - Tool Guide: {tool_intent_map}
+ - **Context-Aware**: Avoid mentioning internal systems (e.g., database names or SQL sources) .
+    ### OUTPUT FORMAT:
+    Return ONLY a valid JSON object in the 'answer' field. 
+    {
+      "answer": "Your natural language response here"
+    }
+    NEVER output raw JSON, internal tool details, tool call IDs, or base64 strings in the 'answer' field.
+"""
 
+
+GLOBAL_FINAL_ANSWER_PROMPT = """
+    You are Theresa, the AI-powered virtual assistant for Vectra. Your role is to deliver professional Product Assistance and Enquiry, customer service, HR support, and insightful data analysis.
+    
+    ### SCOPE OF ASSISTANCE (MANDATORY):
+    - You are to focus on providing support related to Vectra’s IT services, HR functions (including payroll and benefits), Product Management, Loans/Financial Products, Customer Relation and Support, and company data.
+    - If a user asks a question unrelated to these (e.g., general knowledge, world capitals, political opinions, or personal non-work advice), you must politely decline.
+    - **Refusal Template**: "I apologize, but I am specifically trained to assist with Vectra’s IT, HR, and business data services. I am unable to provide information on general topics outside of this scope. How else can I assist you with your work-related queries?"
+    
+    ### NEW USER ENGAGEMENT:
+    - If the user is starting a new conversation or it is your first time interacting with them, you MUST introduce yourself and briefly explain your capabilities so they know how you can help.
+    - **Introduction Guide**: 
+        "Hello! I am Victoria, your Vectra virtual assistant. I'm here to assist you with:
+        * **Account Services**: Managing enquiries, profile updates, and resolving disputes.
+        * **HR Support**: Handling leave applications, payslip requests, and workplace policy guidance.
+        * **Data Analysis**: Generating transaction reports, identifying trends, and creating data visualizations (charts/graphs)."
+
+    ### OPERATING MODES:
+    1. **Customer Support**: Respond with empathy, clarity, and professionalism. Resolve issues and guide users without technical jargon.
+    2. **Data Analyst**: Interpret data, explain trends, and offer actionable insights. When visualizations are included, describe the findings clearly.
+    3. **HR Assistant**: Handle sensitive requests regarding leave and payslips with strict adherence to privacy and clarity.
+
+    ### GENERAL PROTOCOLS:
+    - **Currency**: Always use the Naira sign (₦) when a currency value is required.
+    - **Clarity**: Be final and certain. If unsure, use the appropriate tool or politely state you don't have that specific information. Do not hallucinate.
+    - **Tone**: Structured, clear, polite, and emotionally intelligent.
+
+    ### OPERATING PROTOCOLS:
+    
+    PROTOCOL 1: LEAVE REQUESTS
+    - First call 'fetch_available_leave_types_tool'.
+    - If a type is invalid: inform them, re-list valid options, and do NOT call 'prepare_leave_application_tool'.
+    - LEAVE YEAR LOGIC: Ask: "Is this leave for the current year or your previous year's carry-over?" (Current -> {current_year}, Previous -> {previous_year}).
+    - SUCCESS: After submission, if the type was 'Vacation', offer travel help via 'search_travel_deals_tool'.
+
+    PROTOCOL 2: PAYSLIPS
+    - After 'get_payslip_tool', inform the user: 'Your payslip has been sent to your email.'
+
+    PROTOCOL 3: HR POLICIES & KNOWLEDGE
+    - Use 'pdf_retrieval_tool' to search HR handbooks or questions about bank policies, products, or internal knowledge.
+
+    PROTOCOL 4: DATA ANALYTICS AND VISUALIZATION
+    - Use 'sql_query_tool' for data inquiries by passing the user's natural language question. **NEVER generate SQL yourself.**
+    - FOR VISUALIZATION (plot, chart, graph): You MUST call 'sql_query_tool' first. Pass the resulting raw JSON 'data' object directly into 'generate_visualization_tool'.
+    - If data is empty, do not call the visualization tool; explain why data might be missing.
+
+    PROTOCOL 5: PROFILE UPDATES
+    - Use 'update_customer_tool' or 'update_employee_profile_tool'.
+    - Ensure bank names are present before updating account details.
+
+    PROTOCOL 6: LEAVE STATUS
+    - Use 'fetch_leave_status_tool' for status checks.
+
+    ### CONTEXT:
+    - Current Date: {current_date_str}
+    - Employee ID: {ID}
+    - Tool Guide: {tool_intent_map}
+ - **Context-Aware**: Avoid mentioning internal systems (e.g., database names or SQL sources) .
     ### OUTPUT FORMAT:
     Return ONLY a valid JSON object in the 'answer' field. 
     {
@@ -518,27 +504,9 @@ tool_guide = {
 
 DEFAULT_EMPLOYEE_ID = "obinna.kelechi.adewale@dignityconcept.tech"
 
-embeddings = None
-
-def get_embeddings():
-    global embeddings
-    if embeddings is None:
-        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        if not api_key:
-            logger.error("❌ GEMINI_API_KEY or GOOGLE_API_KEY not found in environment.")
-            raise ValueError("No API key found for embeddings. Set GEMINI_API_KEY or GOOGLE_API_KEY.")
-        
-        try:
-            embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001", google_api_key=api_key)
-            logger.info("✅ Embeddings model initialized.")
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize Embeddings: {e}")
-            raise
-    return embeddings
 
 
 
- 
 
 def ingest_pdf_for_tenant(tenant_id: str, file_path: str):
     """
@@ -1022,7 +990,7 @@ def assistant_node(state: State, config: RunnableConfig):
     # agent_prompt = tenant_config.get("agent_prompt") or None
 
     # Fetch the prompt template
-    agent_prompt = tenant_config.get("agent_prompt1",GLOBAL_FINAL_ANSWER_PROMPT)
+    agent_prompt = tenant_config.get("agent_prompt",GLOBAL_FINAL_ANSWER_PROMPT)
 
 
 
@@ -1101,7 +1069,7 @@ def assistant_node(state: State, config: RunnableConfig):
         try:
             # 🛡️ GOLDEN RULES Appendage: Ensure user-friendly output regardless of DB prompt
             
-            response = llm_with_tools.invoke([SystemMessage(content=f"{system_prompt}\n\n{greeting_instruction}{golden_rules}")] + safe_messages)
+            response = llm_with_tools.invoke([SystemMessage(content=f"{system_prompt}\n\n{greeting_instruction}n\n{golden_rules}")] + safe_messages)
             log_info(f"LLM Raw Output: {response}", tenant_id, conversation_id)
         except Exception as e:
             log_error(f"LLM invoke failed: {e}", tenant_id, conversation_id)
@@ -1228,7 +1196,7 @@ def process_message(message_content: str, conversation_id: str, tenant_id: str, 
         log_error(f"Database configuration fetch failed: {e}. Using defaults.", tenant_id, conversation_id)
     
     if p_res:
-        log_info(f"Prompt template found: {p_res[0][:50]}...", tenant_id, conversation_id)
+        log_info(f"Prompt template found: {p_res[0][:100]}...", tenant_id, conversation_id)
         agent_prompt = p_res[0]
     else:
         log_warning("No prompt template found in DB. Using global default.", tenant_id, conversation_id)
@@ -1262,7 +1230,7 @@ def process_message(message_content: str, conversation_id: str, tenant_id: str, 
         checkpointer.setup()
         
         config = {"configurable": {"thread_id": conversation_id}}
-        systematic_prompt = f"{system_prompt}\n\n{greeting_instruction}{golden_rules}"
+        systematic_prompt = f"{system_prompt}\n\n{greeting_instruction}n\n{golden_rules}"
 
         context = Context(
             tenant_id=tenant_id,

@@ -55,9 +55,24 @@ from sqlalchemy import create_engine
 import re
 import json 
 
+from sqlalchemy import text
+from sqlalchemy import text
+from datetime import datetime
+import random
+from sqlalchemy import text
+import psycopg2
+from sqlalchemy import text
+from sqlalchemy import text
+from sqlalchemy import create_engine
+from langchain_community.utilities import SQLDatabase
+from langchain_community.agent_toolkits import SQLDatabaseToolkit
+from langgraph.prebuilt import create_react_agent
+
 # from myproject_revisit.org.management.commands import state
 from .logger_utils import log_info, log_error, log_debug, log_warning, logger
 from .llm_handler import get_model
+# from .chat_bot import get_llm_instance
+        
 from .ollama_service import OllamaService
 from .base import (MultiplicationInput,
 PayslipQuery,LeaveBalanceRequest,PayslipListQuery,PayslipInfo,PayslipSummary,PayslipListResponse,
@@ -65,8 +80,7 @@ PayslipDownloadQuery,PayslipDownloadResponse,PayslipExplainQuery,PayslipExplainR
 PrepareLeaveApplicationRequest,PreparedLeaveApplication,ValidateLeaveBalanceRequest,
 ValidateLeaveBalanceResponse,CalculateDaysRequest,CalculateDaysResponse,SubmitLeaveApplicationRequest,SearchJobOpportunitiesRequest,
 JobOpportunityResponse,LeaveStatusRequest,ExitPolicyRequest,TravelSearchRequest,ProfileUpdateInput,
-CustomerProfileInput,CustomerDetailsInput,ToolInput,Answer,VisualizationInput,SQLQueryInput,Summary,State,UpdateCustomerProfileInput,Context,ResponseFormat
-           )
+CustomerProfileInput,CustomerDetailsInput,ToolInput,Answer,VisualizationInput,SQLQueryInput,Summary,State,UpdateCustomerProfileInput,Context,ResponseFormat,VisualizationAnalysis)
 # Ensure UTF-8 output
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -582,18 +596,6 @@ def calculate_num_of_days_tool(runtime: ToolRuntime[Context], **kwargs)-> int:
         # Fallback to a standard diff if parsing fails, or return 0
         return 0
 
-from sqlalchemy import text
-from sqlalchemy import text
-from datetime import datetime
-import random
-from sqlalchemy import text
-import psycopg2
-from sqlalchemy import text
-from sqlalchemy import text
-from sqlalchemy import create_engine
-from langchain_community.utilities import SQLDatabase
-from langchain_community.agent_toolkits import SQLDatabaseToolkit
-from langgraph.prebuilt import create_react_agent
 # 2. Update the Tool Function
 @tool("search_job_opportunities_tool", args_schema=SearchJobOpportunitiesRequest)
 def search_job_opportunities_tool(runtime: ToolRuntime[Context], **kwargs)-> str: 
@@ -943,7 +945,7 @@ def init_sql_agent(state: State, llm):
         #     password=OLLAMA_PASSWORD,
         #     model=OLLAMA_MODEL
         # )
-        from chat_bot import get_model
+        from .chat_bot import get_model
         llm =get_model()  # Use the existing get_model function to maintain consistency and leverage any caching or configuration it provides
         toolkit = SQLDatabaseToolkit(db=db, llm=llm)
         tools = toolkit.get_tools()
@@ -1166,8 +1168,6 @@ def sql_query_tool(runtime: ToolRuntime[Context], **kwargs) -> dict:
 
     try:
        
-        from chat_bot import get_model
-
         if not db_uri:
             return {"sql_result": "Error: Database configuration missing."}
 
@@ -1176,6 +1176,7 @@ def sql_query_tool(runtime: ToolRuntime[Context], **kwargs) -> dict:
 
         engine = create_engine(db_uri)
         db = SQLDatabase(engine)
+        from .chat_bot import get_model
         llm = get_model()
 
         toolkit = SQLDatabaseToolkit(db=db, llm=llm)
@@ -1215,7 +1216,7 @@ Format:
 - NEVER output anything other than the JSON block.
 - Ensure column names in "data" are descriptive and clean.
 """
-
+      
 
         agent = create_react_agent(
             llm,
@@ -1226,6 +1227,7 @@ Format:
         agent_response = agent.invoke({"messages": [HumanMessage(content=str(query))]})
         agent_msgs = agent_response.get("messages", [])
         result = agent_msgs[-1].content if agent_msgs else "No response from SQL agent."
+        log_info(f"SQL Tool Response: {result}", tenant_id, conversation_id)
 
         analysis_text = result
         parsed_data = None
@@ -1238,7 +1240,7 @@ Format:
                 analysis_text = parsed.get('analysis', result)
         except:
             pass
-
+        log_info(f"SQL Tool Response: {parsed_data}", tenant_id, conversation_id)
         return {"sql_result": analysis_text, "data": parsed_data}
 
     except Exception as e:
@@ -1265,14 +1267,15 @@ def pdf_retrieval_tool(runtime: ToolRuntime[Context], **kwargs) -> dict:
         return {"pdf_content": "!!ERROR!! CODE:PDF-4003 MESSAGE:Vector store path not provided in configuration."}
 
     try:
-        from chat_bot import embeddings
+        from .chat_bot import get_embeddings
         vector_store = FAISS.load_local(
             folder_path=vector_store_path,
-            embeddings=embeddings,
+            embeddings=get_embeddings(),
             allow_dangerous_deserialization=True,
         )
 
         docs = vector_store.similarity_search(query, k=3)
+        log_info(f"PDF Retrieval found {len(docs)} relevant documents.", tenant_id, conversation_id)
         results_text = []
         sources = set()
         for doc in docs:
@@ -1391,8 +1394,8 @@ def generate_visualization_tool(runtime: ToolRuntime[Context], **kwargs) -> dict
     analysis_text = "" 
    
     try:
-        from chat_bot import get_llm_instance
-        llm = get_llm_instance()
+        from .chat_bot import get_model
+        llm = get_model()
 
         if data:
             log_info("Data provided directly to visualization tool. Bypassing SQL generation.", tenant_id, conversation_id)
@@ -1459,7 +1462,7 @@ def generate_visualization_tool(runtime: ToolRuntime[Context], **kwargs) -> dict
         log_info(f"LLM chose chart type: '{chart_type}'", tenant_id, conversation_id)
 
         # Step 4: Get structured textual analysis from the LLM
-        from base import VisualizationAnalysis
+        # from .base import VisualizationAnalysis
         analysis_prompt = f"Analyze this data and provide a brief, insightful summary based on the user's original request: '{query}'.\n\nData:\n{df.to_csv(index=False)}"        
         
         try:

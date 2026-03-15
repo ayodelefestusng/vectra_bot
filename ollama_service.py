@@ -217,6 +217,9 @@ logger = logging.getLogger(__name__)
 class OllamaService(BaseChatModel):
     model: str = Field(default="gpt-oss:120b")
     timeout: float = Field(default=60.0)
+    base_url: Optional[str] = Field(default=None)
+    username: Optional[str] = Field(default=None)
+    password: Optional[str] = Field(default=None)
 
     # def __init__(self, **kwargs):
     #     super().__init__(**kwargs)
@@ -282,7 +285,7 @@ class OllamaService(BaseChatModel):
         
         # Use direct httpx for the cloud call as well to bypass any library-level async logic
         
-        url = "https://ollama.com/api/chat"
+        url = self.base_url if self.base_url else "https://ollama.com/api/chat"
         payload = {
             "model": cloud_model,
             "messages": messages,
@@ -303,8 +306,12 @@ class OllamaService(BaseChatModel):
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         
+        auth = (self.username, self.password) if self.username and self.password else None
         with httpx.Client(timeout=self.timeout) as client:
-            response = client.post(url, json=payload, headers=headers)
+            if auth:
+                response = client.post(url, json=payload, headers=headers, auth=auth)
+            else:
+                response = client.post(url, json=payload, headers=headers)
             if response.status_code != 200:
                 raise Exception(f"Ollama Cloud API error {response.status_code}: {response.text}")
             return response.json()
@@ -368,6 +375,9 @@ class OllamaService(BaseChatModel):
 class OllamaServicev1(BaseChatModel):
     model: str = Field(default="gpt-oss:120b")
     timeout: float = Field(default=60.0)
+    base_url: Optional[str] = Field(default=None)
+    username: Optional[str] = Field(default=None)
+    password: Optional[str] = Field(default=None)
 
     # def __init__(self, **kwargs):
     #     super().__init__(**kwargs)
@@ -416,7 +426,7 @@ class OllamaServicev1(BaseChatModel):
         
         # Use direct httpx for the cloud call as well to bypass any library-level async logic
       
-        url = "https://ollama.com/api/chat"
+        url = self.base_url if hasattr(self, 'base_url') and self.base_url else "https://ollama.com/api/chat"
         payload = {
             "model": cloud_model,
             "messages": messages,
@@ -426,7 +436,6 @@ class OllamaServicev1(BaseChatModel):
             payload["tools"] = tools
 
         if format:
-            # Handle potential pydantic/schema objects for format
             if hasattr(format, "schema"): payload["format"] = format.schema()
             elif isinstance(format, dict): payload["format"] = format
             else: payload["format"] = format
@@ -437,8 +446,12 @@ class OllamaServicev1(BaseChatModel):
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         
+        auth = (self.username, self.password) if self.username and self.password else None
         with httpx.Client(timeout=self.timeout) as client:
-            response = client.post(url, json=payload, headers=headers)
+            if auth:
+                response = client.post(url, json=payload, headers=headers, auth=auth)
+            else:
+                response = client.post(url, json=payload, headers=headers)
             if response.status_code != 200:
                 raise Exception(f"Ollama Cloud API error {response.status_code}: {response.text}")
             return response.json()
