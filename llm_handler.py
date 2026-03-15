@@ -4,7 +4,8 @@ from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmb
 
 from .logger_utils import log_info, log_error, log_debug, log_warning, logger
 from sqlalchemy import text
-from langchain_community.chat_models import init_chat_model
+from langchain.chat_models import init_chat_model
+
 import os   
 from dotenv import load_dotenv
 load_dotenv()
