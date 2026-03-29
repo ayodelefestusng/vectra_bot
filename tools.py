@@ -1198,9 +1198,42 @@ def sql_query_tool(runtime: ToolRuntime[Context], **kwargs) -> dict:
 
         if db_uri.startswith("postgres://"):
             db_uri = db_uri.replace("postgres://", "postgresql://", 1)
-
+        VECTRA_TABLE_LIST = [
+    # Customer & CRM Tables
+    "customer_account", 
+    "customer_branchperformance", 
+    "customer_contact", 
+    "customer_conversation", 
+    "customer_crmuser", 
+    "customer_customer", 
+    "customer_lead", 
+    "customer_loanreport", 
+    "customer_message", 
+    "customer_opportunity", 
+    "customer_transaction",
+    
+    # Organization & HR Tables
+    "org_location",
+    "org_jobrole", 
+    "employees_employee", 
+    
+    # Recruitment (ATS) Tables
+    "ats_jobposting", 
+    "ats_application", 
+    
+    # Leave Management Tables
+    "leave_leavetype", 
+    "leave_leavebalance"
+]
         engine = create_engine(db_uri)
-        db = SQLDatabase(engine)
+        import warnings
+        from sqlalchemy.exc import SAWarning
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=SAWarning)
+            db = SQLDatabase(engine, 
+        include_tables=VECTRA_TABLE_LIST,
+        sample_rows_in_table_info=2)
+        
         from .chat_bot import get_model
         llm = get_model()
 
@@ -1224,7 +1257,10 @@ CRITICAL INSTRUCTIONS TO PREVENT LOOPS:
                 - customer_message, customer_opportunity, customer_transaction, org_location,
                 - ats_jobposting, ats_application, org_jobrole, employees_employee, 
                 - leave_leavetype, leave_leavebalance.
-
+            Special Instructions:
+            - For customer-related info (e.g., transaction count, customer details), focus on `customer_transaction`.
+            - Use these tables to perform deep data analysis and visualizations.
+            - Limit query results to at most 5 rows.
 Format:
 ```json
 {{
@@ -1623,7 +1659,7 @@ def trim_messages(state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
             processed_messages.append(msg)
 
     # 2. Trim message count if needed
-    if len(processed_messages) <= 3:
+    if len(processed_messages) <= 2:
         if modified:
             return {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES)] + processed_messages}
         return None  # No changes needed

@@ -368,11 +368,85 @@ async def whatsapp_webhook(request: Request):
         # conversation_id = "phone_numbdeeeddeDdssdDDssDr"
         # tenant_id = "DMC"
         # push_name = "User"
-        log_info(f"Processing message from {phone_number}: {message_text}", tenant_id, phone_number)
+        # log_info(f"Processing message from {phone_number}: {message_text}", tenant_id, phone_number)
         
         response = process_message(
             message_content=message_text,
             conversation_id=phone_number,
+            tenant_id=tenant_id,
+            employee_id=employee_id,
+            push_name=push_name
+        )
+        
+        log_info(f"Chatbot response keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}", tenant_id, phone_number)
+        if isinstance(response, dict):
+            viz_image = response.get("viz_image")
+            log_info(f"Response viz_image present: {bool(viz_image)}", tenant_id, phone_number)
+            if viz_image:
+                log_info(f"Entering image sending block. Image length: {len(viz_image)}", tenant_id, phone_number)
+                # Send image first
+                media_res = send_media_message(
+                    phone_number, 
+                    viz_image, 
+                    caption="Here is the chart you requested."
+                )
+                log_info(f"Media API response status: {media_res.status_code}", tenant_id, phone_number)
+                
+                # Send analysis text separately
+                text_to_send = response.get("text", "Analysis complete.")
+                return send_whatsapp_message(phone_number, text_to_send)
+            else:
+                log_info("No visualization image found in dict response.", tenant_id, phone_number)
+        else:
+            log_info(f"Response is not a dict, it is a {type(response)}. Skipping image logic.", tenant_id, phone_number)
+        
+        # Fallback for text-only responses
+        text_content = response.get("text", str(response)) if isinstance(response, dict) else str(response)
+        message_res = send_whatsapp_message(phone_number, text_content)
+        log_info(f"Text message API response: {message_res}", tenant_id, phone_number)
+        return message_res
+
+    except Exception as e:
+        log_error(f"Error in webhook: {e}", "unknown", "unknown")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+DEBUG_MODE = True
+
+@app.post("/webhook2")
+async def whatsapp_webhook2(request: Request):
+    log_info("Received webhook request", "unknown", "unknown")
+    try:
+        if DEBUG_MODE:
+            message_text = "I need chart of monthly transaction count..."
+            employee_id = DEFAULT_EMPLOYEE_ID
+            phone_number = "2348021299221"
+            conversation_id = "debug_conversation"
+            tenant_id = "DMC"
+            push_name = "User"
+
+        else:
+            # Form data handling
+            form_data = await request.form()
+            message_text = form_data.get("message", "")
+            phone_number = form_data.get("phone_number") or form_data.get("sender") or "anonymous"
+            push_name = form_data.get("pushName") or "User"
+            tenant_id = form_data.get("tenant_id", "DMC")
+            employee_id = form_data.get("employee_id", DEFAULT_EMPLOYEE_ID)
+
+        if not message_text:
+            return {"status": "ignored", "reason": "empty message"}
+        # message_text='I need chart of monhtly transaction count from inception till date check customer_transaction schema e'
+        # employee_id = DEFAULT_EMPLOYEE_ID
+        # phone_number = "2348021299221"
+        # conversation_id = "phone_numbdeeeddeDdssdDDssDr"
+        # tenant_id = "DMC"
+        # push_name = "User"
+        # log_info(f"Processing message from {phone_number}: {message_text}", tenant_id, phone_number)
+        
+        response = process_message(
+            message_content=message_text,
+            conversation_id=conversation_id,
             tenant_id=tenant_id,
             employee_id=employee_id,
             push_name=push_name

@@ -1231,6 +1231,7 @@ def process_message(message_content: str, conversation_id: str, tenant_id: str, 
         
         config = {"configurable": {"thread_id": conversation_id}}
         systematic_prompt = f"{system_prompt}\n\n{greeting_instruction}n\n{golden_rules}"
+        log_info(f"System prompt prepared for agent invocation: {systematic_prompt}", tenant_id, conversation_id)
 
         context = Context(
             tenant_id=tenant_id,
