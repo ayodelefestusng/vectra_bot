@@ -217,7 +217,6 @@ class CustomerProfileInput(BaseModel):
     date_of_birth: str = Field(..., description="Date of birth YYYY-MM-DD")
     occupation: Optional[str] = Field(None, description="Customer's occupation")
     nationality: Optional[str] = Field("Nigeria", description="Customer's nationality")
-    nin: str = Field(..., description="National Identification Number (NIN) 11-digit number)")
     current_tool_id: Optional[str] = Field(None)
 
 class CustomerDetailsInput(BaseModel):
@@ -332,125 +331,6 @@ class ResponseFormat(BaseModel):
     visualization_analysis:Optional[str] = Field(None, description="Amalysis  of the generated visualization, if applicable.")
 
  
-# ══════════════════════════════════════════════════════════════════════════════
-# BANKING (VFD) — Pydantic Input Schemas
-# ══════════════════════════════════════════════════════════════════════════════
-
-class VFDAccountOpeningInput(BaseModel):
-    """Input schema for opening a VFD bank account via NIN."""
-    nin: str = Field(..., description="Customer's 11-digit National Identification Number (NIN).")
-    date_of_birth: str = Field(..., description="Customer's date of birth in YYYY-MM-DD format (e.g. 1994-04-05).")
-    phone_number: str = Field(..., description="Customer's registered phone number used to link their banking profile.")
-    current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
-
-
-class FundWalletInput(BaseModel):
-    """Input schema for retrieving wallet funding details."""
-    phone_number: str = Field(..., description="Customer's registered phone number.")
-    current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
-
-
-class BalanceEnquiryInput(BaseModel):
-    """Input schema for wallet balance enquiry. PIN is required."""
-    phone_number: str = Field(..., description="Customer's registered phone number.")
-    pin: str = Field(..., description="Customer's 4-digit numeric PIN for authentication.")
-    current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
-
-
-class BuyAirtimeInput(BaseModel):
-    """Input schema for purchasing airtime for self or a third party."""
-    phone_number: str = Field(..., description="Customer's registered phone number (the payer).")
-    network: str = Field(..., description="Telecom network name, e.g. MTN, Airtel, Glo, 9mobile.")
-    amount: str = Field(..., description="Airtime amount in Naira (e.g. '500').")
-    recipient_type: str = Field(
-        "self",
-        description="Who is receiving the airtime: 'self' for the customer's own number, 'third_party' for someone else.",
-    )
-    beneficiary_phone: Optional[str] = Field(
-        None,
-        description="Beneficiary phone number. Required only when recipient_type is 'third_party'.",
-    )
-    current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
-
-
-class PayBillInput(BaseModel):
-    """Input schema for bill payment. Customer provides only biller name, reference, and amount."""
-    phone_number: str = Field(..., description="Customer's registered phone number.")
-    biller_name: str = Field(
-        ...,
-        description=(
-            "Human-readable biller name, e.g. DSTV, GOTV, EKEDC, IKEDC, Startimes, MTN Data. "
-            "All internal biller IDs are resolved automatically."
-        ),
-    )
-    reference_number: str = Field(
-        ...,
-        description=(
-            "The customer's reference identifier for this biller. "
-            "Meter Number for electricity, Smart Card Number for cable TV, "
-            "Phone Number for airtime/data, Account/Username for internet."
-        ),
-    )
-    amount: str = Field(..., description="Amount to pay in Naira.")
-    current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
-
-
-class BeneficiaryLookupInput(BaseModel):
-    """Input schema for looking up a transfer beneficiary's account name before confirming."""
-    beneficiary_account_number: str = Field(..., description="The recipient's bank account number.")
-    beneficiary_bank: str = Field(..., description="The recipient's bank name (e.g. Access Bank, GTBank).")
-    current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
-
-
-class TransferMoneyInput(BaseModel):
-    """Input schema for executing a funds transfer. PIN is required to authorise."""
-    phone_number: str = Field(..., description="Sender's registered phone number.")
-    beneficiary_account_number: str = Field(..., description="Recipient's bank account number.")
-    beneficiary_bank: str = Field(..., description="Recipient's bank name (e.g. Access Bank, Zenith Bank).")
-    amount: str = Field(..., description="Transfer amount in Naira.")
-    pin: str = Field(..., description="Sender's 4-digit numeric PIN for transaction authorisation.")
-    narration: Optional[str] = Field(None, description="Optional transfer remark / description.")
-    current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
-
-
-class ChangePinInput(BaseModel):
-    """Input schema for changing the customer's 4-digit banking PIN."""
-    phone_number: str = Field(..., description="Customer's registered phone number.")
-    old_pin: str = Field(..., description="Current 4-digit PIN.")
-    new_pin: str = Field(..., description="New 4-digit PIN the customer wishes to set.")
-    confirm_new_pin: str = Field(..., description="Must match new_pin exactly.")
-    current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
-
-
-class ForgotPinInput(BaseModel):
-    """Input schema for resetting the PIN via NIN + liveness verification."""
-    phone_number: str = Field(..., description="Customer's registered phone number.")
-    nin: str = Field(..., description="Customer's National Identification Number (NIN).")
-    new_pin: str = Field(..., description="New 4-digit PIN to set after identity verification.")
-    confirm_new_pin: str = Field(..., description="Must match new_pin exactly.")
-    current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
-
-
-class SavedBillersInput(BaseModel):
-    """Input schema for retrieving a customer's list of saved (quick-pay) billers."""
-    phone_number: str = Field(..., description="Customer's registered phone number.")
-    current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
-
-
-class DeleteSavedBillerInput(BaseModel):
-    """Input schema for removing a saved biller from the customer's quick-pay list."""
-    phone_number: str = Field(..., description="Customer's registered phone number.")
-    biller_name: str = Field(..., description="Name of the biller to remove.")
-    reference_number: str = Field(..., description="Reference (meter number / smart card) associated with the saved biller.")
-    current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
-
-
-class BankListInput(BaseModel):
-    """Input schema for fetching the list of Nigerian banks, optionally filtered by name."""
-    search: Optional[str] = Field(None, description="Optional partial bank name to filter results (e.g. 'access').")
-    current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
-
-
 class State(MessagesState):
     """Manages the conversation state. Uses Pydantic models for structured data."""
 
@@ -499,3 +379,5 @@ class State(MessagesState):
     leave_status: Optional[dict]
     visualization_image: Optional[str]
     visualization_analysis: Optional[str]
+
+    # dff

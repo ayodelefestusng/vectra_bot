@@ -830,6 +830,7 @@ def create_customer_profile_tool(runtime: ToolRuntime[Context], **kwargs)-> str:
     dob_str = kwargs.get('date_of_birth')
     occupation = kwargs.get('occupation') or "Not Specified"
     nationality = kwargs.get('nationality') or "Nigeria"
+    nin = kwargs.get('nin') or "Not Provided"
     
     log_info(f"Creating customer profile for: {first_name} {last_name}", tenant_id, conversation_id)
 
@@ -1675,8 +1676,8 @@ def trim_messages(state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
         ]
     }
 
-
-tools = [
+from .banking_tools import banking_tools
+admin_tools = [
     get_payslip_tool,
     fetch_available_leave_types_tool,
     validate_leave_balance_tool,
@@ -1693,3 +1694,4 @@ tools = [
     pdf_retrieval_tool,
     web_search_tool,
 ]
+tools = admin_tools + banking_tools

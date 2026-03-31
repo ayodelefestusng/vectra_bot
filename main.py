@@ -23,7 +23,7 @@ import base64
 import requests
 import os
 import time
-
+query ="Can I open account."
 def log_debug(msg, tenant_id, conversation_id):
     # Stub for log_debug if not imported
     from .logger_utils import logger
@@ -418,7 +418,7 @@ async def whatsapp_webhook2(request: Request):
     log_info("Received webhook request", "unknown", "unknown")
     try:
         if DEBUG_MODE:
-            message_text = "I need chart of monthly transaction count..."
+            message_text = query
             employee_id = DEFAULT_EMPLOYEE_ID
             phone_number = "2348021299221"
             conversation_id = "debug_conversation"

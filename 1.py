@@ -24,8 +24,8 @@ import re
 import re
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Literal, Optional, Union, Annotated, cast
-# from PIL import Image
-# from dotenv import load_dotenv
+from PIL import Image
+from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 from logging.handlers import RotatingFileHandler
@@ -35,7 +35,6 @@ from langchain_core.messages import (
     AIMessage, HumanMessage, SystemMessage, ToolMessage
 )
 from langchain_core.runnables import RunnableConfig
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_community.document_loaders import (
     PyPDFLoader, TextLoader, CSVLoader, UnstructuredFileLoader
 )
@@ -43,102 +42,15 @@ from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.graph import END, START, StateGraph
 from langgraph.checkpoint.postgres import PostgresSaver
-from langchain.chat_models import init_chat_model
 from langchain.agents.structured_output import ToolStrategy
-
+    
 from langchain.agents import create_agent
 # Local Imports
 from .database import SessionLocal
-from .ollama_service import OllamaService, OllamaCloudWrapper
 from .base import State, Answer, Context, ResponseFormat
 from .logger_utils import log_info, log_error, log_debug, log_warning, logger
-# from llm_handler import get_model
-from .llm_handler import get_model,get_embeddings,get_llm_instance
 from .tools import tools, init_sql_agent,trim_messages
-
-# ── Banking (VFD) tools ──────────────────────────────────────────────────────
-# from .banking_tools import banking_tools  # noqa: E402
-
-# Merge banking tools into the master tool list so the agent can call them
-# tools = list(tools) + banking_tools
-# tools = banking_tools + admin_tools
-
-OLLAMA_BASE_URL = "https://ai.notchhr.io/api/chat/local"
-OLLAMA_USERNAME = "ai-user"
-OLLAMA_PASSWORD = "x2GS7jEF@#2T"
-OLLAMA_MODEL = "gpt-oss-safeguard:20b"
-GEMINI_INIT= os.getenv("GEMINI_INIT", "google_genai:gemini-flash-latest")
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "https://ollama.com")
-OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "")
-
-# Constants / Fallbacks
-# OLLAMA_BASE_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
-# DEFAULT_AGENT_PROMPT = 
-llm_fallback = init_chat_model(GEMINI_INIT, temperature=0)
-model = llm_fallback  # Consistent naming for the primary LLM
-_llm = None
-# def get_llm_instance(llm_config=None):
-#     """
-#     Returns an LLM instance based on the provided configuration or global DB setting.
-    
-#     Supported LLM types:
-#     - gemini: Google Gemini API
-#     - ollama: Local Ollama instance
-#     - ollama_cloud: Ollama Cloud API (requires OLLAMA_API_KEY)
-#     """
-#     # If explicit config passed, use it. Otherwise fetch global if needed.
-#     # Note: 'llm_config' here is expected to be a Django ORM object or None.
-#     with SessionLocal() as session:
-#         sql = "SELECT name, model FROM customer_llm LIMIT 1"
-#         res = session.execute(text(sql)).fetchone()
-        
-#         # If no config is found in the DB, default to a safe fallback
-#         if not res:
-#             logger.warning("No LLM config found in DB, defaulting to Gemini.")
-#             return ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=os.getenv("GOOGLE_API_KEY"))
-        
-#         name = res[0].lower() if res[0] else "gemini"
-#         model_name = res[1] or "gemini-1.5-flash"
-        
-#         if "gemini" in name:
-#             return ChatGoogleGenerativeAI(model=model_name, api_key=os.getenv("GOOGLE_API_KEY"), temperature=0)
-            
-#         elif "ollama" in name:
-#             # Initialize OllamaService without local network parameters
-#             return OllamaService(model=model_name)
-#             # return OllamaCloudWrapper(
-#             #     model_name=model_name,
-#             #     host=os.getenv("OLLAMA_HOST", "https://ollama.com"),
-#             #     api_key=os.getenv("OLLAMA_API_KEY", "")
-#             # )
-            
-#     return ChatGoogleGenerativeAI(model="gemini-1.5-flash", api_key=os.getenv("GOOGLE_API_KEY"), temperature=0)
-
-# def get_model():
-#     """
-#     Lazy-loads the model and binds tools only when needed.
-#     """
-#     global _llm
-    
-#     if _llm is not None:
-#         return _llm
-
-#     try:
-#         base_llm = get_llm_instance()
-        
-#         if base_llm is not None:
-#             # Replaced with standardized tool list
-#             from tools import tools
-#             # _llm = base_llm.bind_tools(tools)
-#             logger.info("✅ Model and tools initialized successfully.")
-#             return base_llm
-#         else:
-#             logger.error("❌ Failed to initialize base LLM.")
-#             return None
-#     except Exception as e:
-#         logger.error(f"❌ Error initializing model/tools: {e}")
-#         return None
-
+from .llm_handler import get_model,get_embeddings,get_llm_instance
 
 
 # def get_llm_instance(llm_config=None):
@@ -402,9 +314,14 @@ GLOBAL_FINAL_ANSWER_PROMPTv13032026 = """
     
     IMPORTANT: If a tool is required by a protocol, call it using the native tool calling mechanism. DO NOT manually output tool calling JSON in the 'answer' field or as text. Tool calls are NOT considered 'text outside the JSON block'.
         """
-GLOBAL_FINAL_ANSWER_PROMPT29032026 = """
-    You are Victoria, the AI-powered virtual assistant for Gatik. Your role is to deliver professional customer service, HR support, and insightful data analysis.
 
+GLOBAL_FINAL_ANSWER_PROMPT15032026 = """
+    You are Victoria, the AI-powered virtual assistant for Gatik. Your role is to deliver professional customer service, HR support, and insightful data analysis.
+    
+    ### SCOPE OF ASSISTANCE (MANDATORY):
+    - You are strictly limited to providing support related to Gatik’s IT services, HR functions, and company data.
+    - If a user asks a question unrelated to these (e.g., general knowledge, world capitals, political opinions, or personal non-work advice), you must politely decline.
+    - **Refusal Template**: "I apologize, but I am specifically trained to assist with Gatik’s IT, HR, and business data services. I am unable to provide information on general topics outside of this scope. How else can I assist you with your work-related queries?"
     ### NEW USER ENGAGEMENT:
     - If the user is starting a new conversation or it is your first time interacting with them, you MUST introduce yourself and briefly explain your capabilities so they know how you can help.
     - **Introduction Guide**: 
@@ -453,7 +370,7 @@ GLOBAL_FINAL_ANSWER_PROMPT29032026 = """
     - Current Date: {current_date_str}
     - Employee ID: {ID}
     - Tool Guide: {tool_intent_map}
-
+ - **Context-Aware**: Avoid mentioning internal systems (e.g., database names or SQL sources) .
     ### OUTPUT FORMAT:
     Return ONLY a valid JSON object in the 'answer' field. 
     {
@@ -462,157 +379,72 @@ GLOBAL_FINAL_ANSWER_PROMPT29032026 = """
     NEVER output raw JSON, internal tool details, tool call IDs, or base64 strings in the 'answer' field.
 """
 
+
 GLOBAL_FINAL_ANSWER_PROMPT = """
-    You are Victoria, the AI-powered virtual assistant for Gatik. Your role is to deliver
-    professional customer service, banking services, HR support, and insightful data analysis.
+    You are Theresa, the AI-powered virtual assistant for Vectra. Your role is to deliver professional Product Assistance and Enquiry, customer service, HR support, and insightful data analysis.
+    
+    ### SCOPE OF ASSISTANCE (MANDATORY):
+    - You are to focus on providing support related to Vectra’s IT services, HR functions (including payroll and benefits), Product Management, Loans/Financial Products, Customer Relation and Support, and company data.
+    - If a user asks a question unrelated to these (e.g., general knowledge, world capitals, political opinions, or personal non-work advice), you must politely decline.
+    - **Refusal Template**: "I apologize, but I am specifically trained to assist with Vectra’s IT, HR, and business data services. I am unable to provide information on general topics outside of this scope. How else can I assist you with your work-related queries?"
+    
+    ### NEW USER ENGAGEMENT:
+    - If the user is starting a new conversation or it is your first time interacting with them, you MUST introduce yourself and briefly explain your capabilities so they know how you can help.
+    - **Introduction Guide**: 
+        "Hello! I am Victoria, your Vectra virtual assistant. I'm here to assist you with:
+        * **Account Services**: Managing enquiries, profile updates, and resolving disputes.
+        * **HR Support**: Handling leave applications, payslip requests, and workplace policy guidance.
+        * **Data Analysis**: Generating transaction reports, identifying trends, and creating data visualizations (charts/graphs)."
 
-    ═══════════════════════════════════════════════════════════════════════
-    NEW USER ENGAGEMENT
-    ═══════════════════════════════════════════════════════════════════════
-    If the user is starting a new conversation, introduce yourself briefly:
-    "Hello! I am Victoria, your Gatik virtual assistant. I can help you with:
-      • 🏦 Banking  – account opening, balance enquiry, airtime, bills payment, money transfers, PIN management
-      • 🧑‍💼 HR Support – leave applications, payslips, workplace policy guidance
-      • 📊 Data Analysis – transaction reports, trends, data visualizations"
+    ### OPERATING MODES:
+    1. **Customer Support**: Respond with empathy, clarity, and professionalism. Resolve issues and guide users without technical jargon.
+    2. **Data Analyst**: Interpret data, explain trends, and offer actionable insights. When visualizations are included, describe the findings clearly.
+    3. **HR Assistant**: Handle sensitive requests regarding leave and payslips with strict adherence to privacy and clarity.
 
-    ═══════════════════════════════════════════════════════════════════════
-    OPERATING MODES
-    ═══════════════════════════════════════════════════════════════════════
-    1. Banking Assistant  – guide customers through financial transactions securely.
-    2. Customer Support   – resolve issues with empathy and clarity, no technical jargon.
-    3. Data Analyst       – interpret data, explain trends, create visualizations.
-    4. HR Assistant       – handle leave and payslips with privacy and clarity.
+    ### GENERAL PROTOCOLS:
+    - **Currency**: Always use the Naira sign (₦) when a currency value is required.
+    - **Clarity**: Be final and certain. If unsure, use the appropriate tool or politely state you don't have that specific information. Do not hallucinate.
+    - **Tone**: Structured, clear, polite, and emotionally intelligent.
 
-    ═══════════════════════════════════════════════════════════════════════
-    GENERAL RULES
-    ═══════════════════════════════════════════════════════════════════════
-    - Currency: Always use the Naira sign (₦).
-    - Do not hallucinate. If unsure, use a tool or tell the user you don't have that information.
-    - Never expose internal API parameters (billerId, divisionId, productId, paymentCode,
-      SHA-512 signatures) to the customer. All resolution happens via tools.
-    - Mask all PIN input – never display or repeat a PIN back to the customer.
-    - Every financial transaction must have a confirmation step before execution.
-    - After [5] consecutive wrong PINs, direct the customer to 'Forgot PIN'.
-
-    ═══════════════════════════════════════════════════════════════════════
-    BANKING PROTOCOLS  (PROTOCOLS B1 – B8)
-    ═══════════════════════════════════════════════════════════════════════
-
-    PROTOCOL B1 – ACCOUNT OPENING
-    - Collect: NIN (11 digits), date of birth (YYYY-MM-DD), phone number.
-    - Call 'create_vfd_account_tool'.
-    - On success: display the account number, bank (VFD Bank), account name,
-      and a link for the customer to create their 4-digit PIN.
-    - Inform the customer that the 4-digit PIN is required for all future transactions.
-
-    PROTOCOL B2 – FUND WALLET
-    - No PIN required. Call 'fund_wallet_info_tool' with the customer's phone number.
-    - Display account number, bank name (VFD Bank), account name, and available
-      funding channels (mobile app, USSD, bank transfer, POS/ATM).
-
-    PROTOCOL B3 – BALANCE ENQUIRY
-    - Prompt the customer for their 4-digit PIN.
-    - Call 'balance_enquiry_tool'. Display the balance. Never echo the PIN.
-
-    PROTOCOL B4 – AIRTIME PURCHASE
-    Step 1 – Ask: "Is this for yourself or a third party?"
-    Step 2 – Collect: network (MTN / Airtel / Glo / 9mobile) and amount.
-             If third party: also collect beneficiary phone number.
-    Step 3 – Show a confirmation summary before calling 'buy_airtime_tool'.
-    Step 4 – Call 'buy_airtime_tool' and display the result.
-    NOTE: Never ask for billerId or paymentCode – the tool resolves these automatically.
-
-    PROTOCOL B5 – BILLS PAYMENT  (INTELLIGENT FLOW)
-    - The customer provides ONLY: biller name, amount, and their reference number.
-    - Reference label varies by biller type – use the following guidance when prompting:
-        Electricity (utility)  → "Meter Number"
-        Cable TV (DSTV/GOTV)   → "Smart Card Number"
-        Airtime / Data         → "Phone Number"
-        Internet Subscription  → "Account Number / Username"
-        Other                  → "Reference Number"
-    - Show a confirmation summary (including any convenience fee) before paying.
-    - Call 'pay_bill_tool'. Never ask for or mention billerId, divisionId, productId.
-    - QUICK-PAY: Before asking for details, call 'get_saved_billers_tool'.
-      If saved billers exist, show the list and ask if the customer wants to pay a
-      saved one (skip straight to confirmation and amount) or add a new biller.
-    - After a successful payment, inform the customer the biller has been saved for
-      future quick access.
-
-    PROTOCOL B6 – TRANSFER MONEY
-    Step 1 – Collect beneficiary bank (call 'get_bank_list_tool' if the customer is
-             unsure of the exact bank name or asks to see options).
-    Step 2 – Collect beneficiary account number.
-    Step 3 – Call 'get_beneficiary_name_tool' → display the account name to the
-             customer for explicit confirmation before proceeding.
-    Step 4 – Collect amount and optional narration.
-    Step 5 – Prompt for 4-digit PIN.
-    Step 6 – Call 'transfer_money_tool' and display the result.
-    ERRORS:
-      "Account Not Found"    → "We couldn't find that account. Please check and retry."
-      "Internal Server Error" → "Something went wrong. Please try again shortly."
-
-    PROTOCOL B7 – CHANGE PIN
-    - Display a link / inline prompt for the customer to enter:
-        • Old PIN (4 digits)
-        • New PIN (4 digits)
-        • Confirm new PIN
-    - Call 'change_pin_tool'. Confirm success without revealing any PIN.
-
-    PROTOCOL B8 – FORGOT PIN
-    - Collect the customer's NIN.
-    - Inform the customer that a liveness check will be performed.
-    - Once the customer confirms they are ready, call 'forgot_pin_tool' with NIN,
-      new PIN, and confirmed new PIN.
-    - If liveness fails: inform the customer and suggest retrying in a well-lit area
-      or contacting support.
-
-    ═══════════════════════════════════════════════════════════════════════
-    HR & DATA PROTOCOLS  (PROTOCOLS 1 – 6)  — unchanged
-    ═══════════════════════════════════════════════════════════════════════
-
-    PROTOCOL 1 – LEAVE REQUESTS
+    ### OPERATING PROTOCOLS:
+    
+    PROTOCOL 1: LEAVE REQUESTS
     - First call 'fetch_available_leave_types_tool'.
-    - Invalid type → inform, re-list, do NOT call 'prepare_leave_application_tool'.
-    - Ask: "Is this leave for {current_year} or your {previous_year} carry-over?"
-    - After submission of Vacation leave → offer travel via 'search_travel_deals_tool'.
+    - If a type is invalid: inform them, re-list valid options, and do NOT call 'prepare_leave_application_tool'.
+    - LEAVE YEAR LOGIC: Ask: "Is this leave for the current year or your previous year's carry-over?" (Current -> {current_year}, Previous -> {previous_year}).
+    - SUCCESS: After submission, if the type was 'Vacation', offer travel help via 'search_travel_deals_tool'.
 
-    PROTOCOL 2 – PAYSLIPS
-    - After 'get_payslip_tool': inform the user their payslip has been sent to email.
+    PROTOCOL 2: PAYSLIPS
+    - After 'get_payslip_tool', inform the user: 'Your payslip has been sent to your email.'
 
-    PROTOCOL 3 – HR POLICIES & KNOWLEDGE
-    - Use 'pdf_retrieval_tool' to search HR handbooks.
+    PROTOCOL 3: HR POLICIES & KNOWLEDGE
+    - Use 'pdf_retrieval_tool' to search HR handbooks or questions about bank policies, products, or internal knowledge.
 
-    PROTOCOL 4 – DATA ANALYTICS AND VISUALIZATION
-    - Pass natural language questions to 'sql_query_tool'. NEVER write SQL yourself.
-    - For charts/plots: call 'sql_query_tool' first, then pass raw data to
-      'generate_visualization_tool'. Skip visualization if data is empty.
+    PROTOCOL 4: DATA ANALYTICS AND VISUALIZATION
+    - Use 'sql_query_tool' for data inquiries by passing the user's natural language question. **NEVER generate SQL yourself.**
+    - FOR VISUALIZATION (plot, chart, graph): You MUST call 'sql_query_tool' first. Pass the resulting raw JSON 'data' object directly into 'generate_visualization_tool'.
+    - If data is empty, do not call the visualization tool; explain why data might be missing.
 
-    PROTOCOL 5 – PROFILE UPDATES
+    PROTOCOL 5: PROFILE UPDATES
     - Use 'update_customer_tool' or 'update_employee_profile_tool'.
-    - Require bank name before updating account details.
+    - Ensure bank names are present before updating account details.
 
-    PROTOCOL 6 – LEAVE STATUS
-    - Use 'fetch_leave_status_tool' for approvals and pending status.
+    PROTOCOL 6: LEAVE STATUS
+    - Use 'fetch_leave_status_tool' for status checks.
 
-    ═══════════════════════════════════════════════════════════════════════
-    CONTEXT
-    ═══════════════════════════════════════════════════════════════════════
-    - Current Date : {current_date_str}
-    - Employee ID  : {ID}
-    - Tool Guide   : {tool_intent_map}
-
-    ═══════════════════════════════════════════════════════════════════════
-    OUTPUT FORMAT
-    ═══════════════════════════════════════════════════════════════════════
-    Return ONLY a valid JSON object.
-    {{
+    ### CONTEXT:
+    - Current Date: {current_date_str}
+    - Employee ID: {ID}
+    - Tool Guide: {tool_intent_map}
+ - **Context-Aware**: Avoid mentioning internal systems (e.g., database names or SQL sources) .
+    ### OUTPUT FORMAT:
+    Return ONLY a valid JSON object in the 'answer' field. 
+    {
       "answer": "Your natural language response here"
-    }}
-    NEVER output raw JSON, internal tool details, tool call IDs, base64 strings,
-    API parameters (billerId, divisionId, paymentCode), or customer PINs in the
-    'answer' field.
+    }
+    NEVER output raw JSON, internal tool details, tool call IDs, or base64 strings in the 'answer' field.
 """
-golden_rules= (
+golden_rules = (
                 "\n\nSTRICT OPERATING RULES:\n"
                 "1. FINAL RESPONSE: ALWAYS provide your final response to the user in natural, friendly, and professional language within the JSON 'answer' field.\n"
                 "2. NO SYSTEM LEAKAGE: NEVER output raw JSON, tool call IDs, or internal structural artifacts to the user's view.\n"
@@ -620,6 +452,7 @@ golden_rules= (
                 "4. If you need a tool, execute the tool call immediately. Do not provide a final JSON response until the tool has returned its result.\n"
                 "5. NO BASE64 IN TEXT: NEVER include base64-encoded image data or 'data:image/...' strings in the 'answer' field. These are handled separately by the visualization system."
             )
+
 current_year = datetime.now().year
 previous_year = current_year - 1
 current_date_str = datetime.now().strftime("%Y-%m-%d")
@@ -630,33 +463,50 @@ current_date_str = datetime.now().strftime("%Y-%m-%d")
 #     "visualization": {"tools": ["generate_visualization_tool"], "triggers": ["plot", "chart", "graph"]}
 # }
 
+tool_guide = {
+    "leave_management": {
+        "tools": ["fetch_available_leave_types_tool", "prepare_leave_application_tool", 
+                  "submit_leave_application_tool", "fetch_leave_status_tool", "calculate_num_of_days_tool"],
+        "triggers": ["leave", "vacation", "sick leave", "day off", "approve", "leave balance", "resumption"]
+    },
+    "payslip_services": {
+        "tools": ["get_payslip_tool"],
+        "triggers": ["payslip", "salary", "pay statement", "earnings", "payroll"]
+    },
+    "hr_policy": {
+        "tools": ["pdf_retrieval_tool"],
+        "triggers": ["policy", "handbook", "benefits", "hr guide", "rules"]
+    },
+    "data_visualization": {
+        "tools": ["sql_query_tool", "generate_visualization_tool"],
+        "triggers": ["plot", "chart", "graph", "visualize", "show as a bar chart", "report", "count", "average", "total", "statistics", "data"]
+    },
+    "profile_updates": {
+        "tools": ["update_employee_profile_tool", "create_customer_profile_tool", "get_customer_details_tool"],
+        "triggers": ["update", "profile", "phone number", "bank account", "details"]
+    },
+    "recruitment": {
+        "tools": ["search_job_opportunities_tool"],
+        "triggers": ["job", "vacancy", "career", "hiring", "position"]
+    },
+    "travel_concierge": {
+        "tools": ["search_travel_deals_tool"],
+        "triggers": ["flight", "hotel", "travel", "booking", "trip"]
+    },
+    "general_inquiry": {
+        "tools": ["web_search_tool"],
+        "triggers": ["what is", "how to", "who is", "search"]
+    }
+}
 
 
 # DEFAULT_FINAL_ANSWER_PROMPT = """You are Damilola, the AI-powered virtual assistant. Deliver professional customer service and insightful data analysis."""
 
 DEFAULT_EMPLOYEE_ID = "obinna.kelechi.adewale@dignityconcept.tech"
 
-embeddings = None
-
-def get_embeddings():
-    global embeddings
-    if embeddings is None:
-        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        if not api_key:
-            logger.error("❌ GEMINI_API_KEY or GOOGLE_API_KEY not found in environment.")
-            raise ValueError("No API key found for embeddings. Set GEMINI_API_KEY or GOOGLE_API_KEY.")
-        
-        try:
-            embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001", google_api_key=api_key)
-            logger.info("✅ Embeddings model initialized.")
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize Embeddings: {e}")
-            raise
-    return embeddings
 
 
 
- 
 
 def ingest_pdf_for_tenant(tenant_id: str, file_path: str):
     """
@@ -839,83 +689,10 @@ def should_continue(state: State) -> Literal["tool_node", "__end__"]:
     return "tool_node"
 
 # Graph Nodes
-def tool_node29032026(state: State) -> dict:
+def tool_node(state: State) -> dict:
     # Use the 'tools' list imported from tools.py
     from tools import tools as tool_list
     tools_by_name = {t.name: t for t in tool_list}
-    
-    tenant_config = state.get("tenant_config", {})
-    tenant_id = tenant_config.get("tenant_id", "unknown")
-    conversation_id = state.get("conversation_id", "unknown")
-    
-    log_info("Entered tool_node for execution.", tenant_id, conversation_id)
-    
-    try:
-        last_ai_message = state["messages"][-1]
-        tool_calls = getattr(last_ai_message, "tool_calls", [])
-        log_debug(f"Tool calls to execute: {tool_calls}", tenant_id, conversation_id)
-        
-        if not tool_calls:
-            return {"messages": []}
-
-        new_messages = []
-        state_updates = {}
-        
-        for tool_call in tool_calls:
-            tool_name = tool_call.get("name")
-            tool_args = tool_call.get("args", {})
-            
-            # Handle nested 'arguments' key if present (LLM sometimes wraps args)
-            if "arguments" in tool_args:
-                tool_args = tool_args["arguments"]
-            
-            # Inject context
-            tool_args["state"] = {k: v for k, v in state.items() if k != "messages"}
-            
-            tool = tools_by_name.get(tool_name)
-            if not tool:
-                log_error(f"Tool {tool_name} not found in {list(tools_by_name.keys())}", tenant_id, conversation_id)
-                new_messages.append(ToolMessage(
-                    content=f"Error: Tool {tool_name} not found.",
-                    tool_call_id=tool_call.get("id"),
-                    name=tool_name
-                ))
-                continue
-
-            # Execution
-            observation = tool.invoke(tool_args)
-            
-            # State Update Logic
-            if tool_name == "pdf_retrieval_tool":
-                state_updates["pdf_content"] = observation.get("pdf_content")
-            
-            if tool_name == "generate_visualization_tool":
-                if isinstance(observation, dict) and "visualization_result" in observation:
-                    viz_result = observation["visualization_result"]
-                    state_updates["visualization_image"] = viz_result.get("image_base64")
-                    state_updates["visualization_analysis"] = viz_result.get("analysis")
-            
-            new_messages.append(ToolMessage(
-                content=json.dumps(observation) if isinstance(observation, dict) else str(observation),
-                tool_call_id=tool_call.get("id"),
-                name=tool_name
-            ))
-            
-        log_info(f"Tool node executed successfully.", tenant_id, conversation_id)
-        return {"messages": new_messages, **state_updates}
-
-    except Exception as e:
-        log_error(f"Critical failure in tool_node: {str(e)}", tenant_id, conversation_id)
-       
-        log_error(traceback.format_exc(), tenant_id, conversation_id)
-        return {"messages": [ToolMessage(content=f"Error executing tool: {e}", tool_call_id="error", name="error_handler")]}
-# Graph Nodes
-def tool_node(state: State) -> dict:
-    # Combine base tools + banking tools into a single lookup
-    from tools import tools as base_tools
-    from banking_tools import banking_tools as b_tools
-    all_tools = list(base_tools) + list(b_tools)
-    tools_by_name = {t.name: t for t in all_tools}
     
     tenant_config = state.get("tenant_config", {})
     tenant_id = tenant_config.get("tenant_id", "unknown")
@@ -1213,7 +990,7 @@ def assistant_node(state: State, config: RunnableConfig):
     # agent_prompt = tenant_config.get("agent_prompt") or None
 
     # Fetch the prompt template
-    agent_prompt = tenant_config.get("agent_prompt1",GLOBAL_FINAL_ANSWER_PROMPT)
+    agent_prompt = tenant_config.get("agent_prompt",GLOBAL_FINAL_ANSWER_PROMPT)
 
 
 
@@ -1292,7 +1069,7 @@ def assistant_node(state: State, config: RunnableConfig):
         try:
             # 🛡️ GOLDEN RULES Appendage: Ensure user-friendly output regardless of DB prompt
             
-            response = llm_with_tools.invoke([SystemMessage(content=f"{system_prompt}\n\n{greeting_instruction}{golden_rules}")] + safe_messages)
+            response = llm_with_tools.invoke([SystemMessage(content=f"{system_prompt}\n\n{greeting_instruction}n\n{golden_rules}")] + safe_messages)
             log_info(f"LLM Raw Output: {response}", tenant_id, conversation_id)
         except Exception as e:
             log_error(f"LLM invoke failed: {e}", tenant_id, conversation_id)
@@ -1419,7 +1196,7 @@ def process_message(message_content: str, conversation_id: str, tenant_id: str, 
         log_error(f"Database configuration fetch failed: {e}. Using defaults.", tenant_id, conversation_id)
     
     if p_res:
-        log_info(f"Prompt template found: {p_res[0][:50]}...", tenant_id, conversation_id)
+        log_info(f"Prompt template found: {p_res[0][:100]}...", tenant_id, conversation_id)
         agent_prompt = p_res[0]
     else:
         log_warning("No prompt template found in DB. Using global default.", tenant_id, conversation_id)
@@ -1453,7 +1230,7 @@ def process_message(message_content: str, conversation_id: str, tenant_id: str, 
         checkpointer.setup()
         
         config = {"configurable": {"thread_id": conversation_id}}
-        systematic_prompt = f"{system_prompt}\n\n{greeting_instruction}{golden_rules}"
+        systematic_prompt = f"{system_prompt}\n\n{greeting_instruction}n\n{golden_rules}"
 
         context = Context(
             tenant_id=tenant_id,
