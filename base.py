@@ -208,7 +208,7 @@ class ProfileUpdateInput(BaseModel):
 
 
 
-class CustomerProfileInput(BaseModel):
+class CustomerProfileInputvfd(BaseModel):
     first_name: str = Field(..., description="First name of the customer")
     last_name: str = Field(..., description="Last name of the customer")
     email: str = Field(..., description="Email address")
@@ -219,6 +219,69 @@ class CustomerProfileInput(BaseModel):
     nationality: Optional[str] = Field("Nigeria", description="Customer's nationality")
     nin: str = Field(..., description="National Identification Number (NIN) 11-digit number)")
     current_tool_id: Optional[str] = Field(None)
+
+class CustomerProfileInput(BaseModel):
+    """Schema for create_customer_profile_tool."""
+    first_name:    str = Field(..., description="Customer's first name")
+    last_name:     str = Field(..., description="Customer's last name")
+    email:         str = Field(..., description="Customer's email address")
+    phone:         str = Field(..., description="Nigerian phone number (e.g. 08012345678)")
+    gender:        str = Field(..., description="'male' or 'female'")
+    date_of_birth: str = Field(..., description="Date of birth (YYYY-MM-DD)")
+    nin:           str = Field(..., description="11-digit National Identification Number")
+    occupation:    str = Field("Not Specified", description="Occupation")
+    nationality:   str = Field("Nigeria", description="Nationality")
+    current_tool_id: Optional[str] = Field(None)
+
+# class AuthenticateCustomerInput(BaseModel):
+#     """Schema for authenticate_customer_tool."""
+#     phone_number: str = Field(..., description="Customer's registered phone number")
+#     password:     Optional[str] = Field(None, description="Customer's service password")
+
+
+class LoanEligibilityInput(BaseModel):
+    """Schema for evaluate_loan_eligibility_tool."""
+    phone_number:   str = Field(..., description="Customer's registered phone number")
+    amount:   str = Field(..., description="Amount of loan requested")
+    tenor:   str = Field(..., description="Tenor of loan requested in months")
+    facebook_url:   str = Field("", description="Facebook profile URL (optional) to assist credit evaluation")
+    linkedin_url:   str = Field("", description="LinkedIn profile URL (optional)")
+    instagram_url:  str = Field("", description="Instagram profile URL (optional)")
+    twitter_url:    str = Field("", description="Twitter / X profile URL (optional)")
+    tiktok_url:     str = Field("", description="TikTok profile URL (optional)")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PYDANTIC SCHEMAS
+# ──────────────────────────────────────────────────────────────────────────────
+
+class ValidateSocialMediaInput(BaseModel):
+    platform:    str = Field(..., description="Platform name: facebook, linkedin, instagram, twitter, tiktok")
+    profile_url: str = Field(..., description="Full profile URL to validate")
+
+
+class InitiatePasswordResetInput(BaseModel):
+    phone_number: str = Field(..., description="Customer's registered phone number")
+
+
+class ConfirmPasswordResetInput(BaseModel):
+    phone_number:      str  = Field(..., description="Customer's registered phone number")
+    customer_confirmed: bool = Field(..., description="True if customer agreed to the ₦10 SMS charge")
+
+
+class VerifyOTPInput(BaseModel):
+    phone_number: str = Field(..., description="Customer's registered phone number")
+    otp_code:     str = Field(..., description="6-digit OTP entered by the customer")
+
+
+class ApplyForLoanInput(BaseModel):
+    phone_number:     str   = Field(..., description="Customer's registered phone number")
+    amount_requested: float = Field(..., description="Loan amount requested in Naira")
+    tenor:            int   = Field(..., description="Loan duration in months")
+    bank:             str   = Field("VFD Microfinance Bank", description="Customer's bank name")
+
+
+
 
 class CustomerDetailsInput(BaseModel):
     phone_or_email: Optional[str] = Field(None, description="Phone number or email address of the customer")
@@ -315,6 +378,7 @@ class Context(BaseModel):
     emp_id: Optional[str] = Field(description="The employee's email or ID, if available.")
     db_uri: Optional[str] = Field(description="Database connection URI, injected at runtime.")
     push_name: Optional[str] = Field(description="The name of the push notification, injected at runtime.")
+    device_type: Optional[str] = Field("unknown", description="The device type of the user.")
     agent_prompt: str = Field(description="The original prompt given to the agent, injected at runtime.")
     final_answer_prompt: str = Field(description="The final prompt used to generate the answer, injected at runtime.")
     tool_intent_map: Optional[Dict[str, Any]] = Field(description="A mapping of tool categories to their intended tools and triggers.")
@@ -499,3 +563,9 @@ class State(MessagesState):
     leave_status: Optional[dict]
     visualization_image: Optional[str]
     visualization_analysis: Optional[str]
+
+    phone_number: str
+    event: str
+    tenant_id: str = "DMC"
+    employee_id: str = "unknown"
+    customer_name: str = "Customer"

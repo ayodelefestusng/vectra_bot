@@ -8,6 +8,8 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request, logger
 from pydantic import BaseModel
 from typing import Optional
+
+
 # import imghdr
 import base64
 import requests
@@ -24,6 +26,10 @@ import requests
 import os
 import time
 query ="Can I open account."
+# query =" Ayodele Adeyinka 16041979 ayodelefestusng@gmail.com 08021299221 Male 53053498019"
+# query ="Banking Nigeriam"
+# query ="16 04 1979 13012345670 08021299221"
+# query ="Ayodele Adeyinka Nigerian Banking ayodelefestusng@gmail.com male 08021299221 16 04 1979"
 def log_debug(msg, tenant_id, conversation_id):
     # Stub for log_debug if not imported
     from .logger_utils import logger
@@ -34,6 +40,7 @@ def log_debug(msg, tenant_id, conversation_id):
 app = FastAPI(title="Chatbot API", description="FastAPI Refactor with WhatsApp Integration")
 
 DEFAULT_EMPLOYEE_ID = "obinna.kelechi.adewale@dignityconcept.tech"
+DEBUG_MODE = True
 
 class ChatRequest(BaseModel):
     message: str
@@ -45,6 +52,13 @@ class ChatRequest(BaseModel):
 class LoadPDFRequest(BaseModel):
     tenant_id: str
     file_path: str
+
+class CTAPayload(BaseModel):
+    phone_number: str
+    event: str
+    tenant_id: str = "DMC"
+    employee_id: str = "unknown"
+    customer_name: str = "Customer"
 
 def convert_drive_link_to_direct(url: str) -> str:
     """
@@ -153,9 +167,6 @@ def send_whatsapp_message_wrond__deployed(number: str, text: str):
     
     response = requests.post(url, json=payload, headers=headers)
     return response.json()
-
-
-
 
 def send_media_message(number: str, base64_image: str, caption: str):
     log_info(f"Preparing to send media message to {number}. Image length: {len(base64_image)}", "system", "system")
@@ -335,11 +346,12 @@ async def whatsapp_webhook(request: Request):
             # Evolution API specific data structure
             if "data" in payload and isinstance(payload["data"], dict):
                 data = payload["data"]
+                log_info(f"Received webhook request {data}", "unknown", "unknown")
                 phone_number = data.get("key", {}).get("remoteJid", "").split("@")[0]
                 push_name = data.get("pushName") or "User"
                 message_text = data.get("message", {}).get("conversation", "") or \
                                data.get("message", {}).get("extendedTextMessage", {}).get("text", "")
-            
+                source= data.get("source") or "unknown"
             # Fallback for other JSON formats
             if not message_text:
                 message_text = payload.get("message", {}).get("text") or payload.get("text", "")
@@ -347,7 +359,12 @@ async def whatsapp_webhook(request: Request):
                 phone_number = payload.get("sender") or payload.get("from") or "anonymous"
             if push_name == "User":
                 push_name = payload.get("pushName") or "User"
-            
+            if source in ["ios","android"]:
+                device_type = "phone"
+            elif source == "web":
+                device_type = "web"
+            else:
+                device_type = "unknown"
             tenant_id = payload.get("tenant_id", "DMC")
             employee_id = payload.get("employee_id", DEFAULT_EMPLOYEE_ID)
             
@@ -373,9 +390,11 @@ async def whatsapp_webhook(request: Request):
         response = process_message(
             message_content=message_text,
             conversation_id=phone_number,
+            phone_number=phone_number,
             tenant_id=tenant_id,
             employee_id=employee_id,
-            push_name=push_name
+            push_name=push_name,
+            device_type=device_type
         )
         
         log_info(f"Chatbot response keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}", tenant_id, phone_number)
@@ -411,19 +430,50 @@ async def whatsapp_webhook(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-DEBUG_MODE = True
+
+
+@app.post("/webhook/trigger_cta")
+async def trigger_cta_webhook(payload: CTAPayload):
+    log_info(f"Triggering CTA for {payload.phone_number} on event {payload.event}", payload.tenant_id, "system")
+    
+    # Prompt context for CTA
+    if payload.event == "password_created":
+        prompt = f"The customer {payload.customer_name} just successfully created their banking password. Congratulate them briefly and ask if they'd like to check their balance, transfer funds, or apply for a loan now."
+    elif payload.event == "loan_accepted":
+        prompt = f"The customer {payload.customer_name} just accepted their loan offer. Congratulate them briefly and tell them their funds have been successfully disbursed."
+    else:
+        prompt = f"The customer {payload.customer_name} just completed an action: {payload.event}. Offer them further assistance."
+        
+    try:
+        response = process_message(
+            message_content=prompt,
+            conversation_id=payload.phone_number,
+            phone_number=payload.phone_number,
+            tenant_id=payload.tenant_id,
+            employee_id=payload.employee_id,
+            push_name=payload.customer_name,
+            device_type="system"
+        )
+        text_content = response.get("text", str(response)) if isinstance(response, dict) else str(response)
+        message_res = send_whatsapp_message(payload.phone_number, text_content)
+        return {"status": "success", "message": "CTA sent", "content": text_content, "whatsapp_response": message_res}
+    except Exception as e:
+        log_error(f"Error in trigger_cta: {e}", payload.tenant_id, "system")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/webhook2")
 async def whatsapp_webhook2(request: Request):
-    log_info("Received webhook request", "unknown", "unknown")
+    log_info("Received webhook2 request", "unknown", "unknown")
     try:
         if DEBUG_MODE:
             message_text = query
             employee_id = DEFAULT_EMPLOYEE_ID
             phone_number = "2348021299221"
-            conversation_id = "debug_conversation"
+            conversation_id = "debug_conversation12"
             tenant_id = "DMC"
             push_name = "User"
+            device_type = "phone"
 
         else:
             # Form data handling
@@ -433,6 +483,7 @@ async def whatsapp_webhook2(request: Request):
             push_name = form_data.get("pushName") or "User"
             tenant_id = form_data.get("tenant_id", "DMC")
             employee_id = form_data.get("employee_id", DEFAULT_EMPLOYEE_ID)
+            conversation_id = form_data.get("phone_number") or form_data.get("sender") or "anonymous"
 
         if not message_text:
             return {"status": "ignored", "reason": "empty message"}
@@ -447,9 +498,11 @@ async def whatsapp_webhook2(request: Request):
         response = process_message(
             message_content=message_text,
             conversation_id=conversation_id,
+            phone_number=phone_number
             tenant_id=tenant_id,
             employee_id=employee_id,
-            push_name=push_name
+            push_name=push_name,
+            device_type=device_type
         )
         
         log_info(f"Chatbot response keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}", tenant_id, phone_number)

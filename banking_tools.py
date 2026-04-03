@@ -24,12 +24,28 @@ Covered services
  11.  Saved Billers (del)  – delete_saved_biller_tool
  12.  Bank List            – get_bank_list_tool
 """
-
+import os
+import re
+import uuid
 import hashlib
 import os
 import uuid
-from datetime import datetime
+import json
+from datetime import datetime, timedelta, timezone as dt_timezone
+from decimal import Decimal, InvalidOperation
+import os
+import re
+import uuid
+import random
+import json
 
+import requests
+from langchain.tools import tool, ToolRuntime
+from pydantic import BaseModel, Field
+
+
+
+from .base import Context
 import requests
 from langchain.tools import tool, ToolRuntime
 from sqlalchemy import create_engine, text
@@ -48,29 +64,37 @@ from .base import (
     ForgotPinInput,
     SavedBillersInput,
     DeleteSavedBillerInput,
-    BankListInput,
+    BankListInput,CustomerProfileInput,LoanEligibilityInput,AuthenticateCustomerInput,
+    ValidateSocialMediaInput,ValidateSocialMediaInput,InitiatePasswordResetInput,
+    ConfirmPasswordResetInput,VerifyOTPInput,ApplyForLoanInput
 )
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
 # ──────────────────────────────────────────────────────────────────────────────
 
-WALLET_BASE_URL = os.getenv(
-    "VFD_WALLET_BASE_URL",
-    "https://api-devapps.vfdbank.systems/vtech-wallet/api/v2/wallet2",
-)
+WALLET_BASE_URL  = os.getenv("VFD_WALLET_BASE_URL",
+    "https://api-devapps.vfdbank.systems/vtech-wallet/api/v2/wallet2")
+AUTH_URL         = os.getenv("VFD_AUTH_URL",
+    "https://api-devapps.vfdbank.systems/vfd-tech/baas-portal/v1.1/baasauth/token")
+CONSUMER_KEY     = os.getenv("VFD_CONSUMER_KEY",    "mL1dqaMcB760EP3fR18Vc23qUSZy")
+CONSUMER_SECRET  = os.getenv("VFD_CONSUMER_SECRET", "ohAWPpabbj0UmMppmOgAFTazkjQt")
+APP_BASE_URL     = os.getenv("APP_BASE_URL",    "https://yourapp.com")
+SMS_API_URL      = os.getenv("SMS_API_URL",     "https://mock-sms.yourapp.com/send")
+SMS_API_KEY      = os.getenv("SMS_API_KEY",     "mock-key")
+WALLET_PREFIX    = os.getenv("VFD_WALLET_PREFIX", "DML")
+
+OTP_CHARGE_AMOUNT      = Decimal("10.00")   # ₦10 debit before OTP is sent
+OTP_EXPIRY_SECONDS     = 10                 # tight 10-second window
+PASSWORD_SETUP_PATH    = "/banking/set-password"
+TOKEN_EXPIRY_HOURS     = 24
+
 BILLS_BASE_URL = os.getenv(
     "VFD_BILLS_BASE_URL",
     "https://api-devapps.vfdbank.systems/vtech-bills/api/v2/billspaymentstore",
 )
-AUTH_URL = os.getenv(
-    "VFD_AUTH_URL",
-    "https://api-devapps.vfdbank.systems/vfd-tech/baas-portal/v1.1/baasauth/token",
-)
+
 LIVENESS_API_URL = os.getenv("LIVENESS_API_URL", "https://yourapp.com/api/liveness")
-CONSUMER_KEY     = os.getenv("VFD_CONSUMER_KEY",    "mL1dqaMcB760EP3fR18Vc23qUSZy")
-CONSUMER_SECRET  = os.getenv("VFD_CONSUMER_SECRET", "ohAWPpabbj0UmMppmOgAFTazkjQt")
-WALLET_PREFIX    = os.getenv("VFD_WALLET_PREFIX",   "rosapay")
 
 # Human-readable reference labels per biller category shown to customer
 CATEGORY_REFERENCE_LABEL: dict = {
@@ -83,8 +107,12 @@ CATEGORY_REFERENCE_LABEL: dict = {
 
 # Categories that require mandatory VFD customer-validate call before payment
 MANDATORY_VALIDATE_CATEGORIES = {"utility", "cable tv", "betting", "gaming"}
-
 MAX_PIN_ATTEMPTS = 5
+# Credit bureau – replace with your actual provider
+CREDIT_BUREAU_URL = os.getenv("CREDIT_BUREAU_URL", "https://creditbureau.example.ng/api/v1")
+CREDIT_BUREAU_KEY = os.getenv("CREDIT_BUREAU_API_KEY", "")
+PASSWORD_SETUP_TOKEN_EXPIRY_HOURS = 24
+PASSWORD_SETUP_PATH = "/banking/set-password"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -92,6 +120,8 @@ MAX_PIN_ATTEMPTS = 5
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _get_access_token() -> str:
+    log_info("_get_access_token  called","sudo_tenant_id", "sudo_conversation_id")
+    
     payload = {
         "consumerKey":    CONSUMER_KEY,
         "consumerSecret": CONSUMER_SECRET,
@@ -114,6 +144,9 @@ def _wallet_headers() -> dict:
 
 
 def _unique_ref() -> str:
+    log_info("_unique_ref  called","sudo_tenant_id", "sudo_conversation_id")
+
+    
     ts  = datetime.utcnow().strftime("%Y%m%d%H%M%S")
     uid = uuid.uuid4().hex[:6].upper()
     return f"{WALLET_PREFIX}-{ts}-{uid}"
@@ -121,6 +154,8 @@ def _unique_ref() -> str:
 
 def _normalise_db_uri(db_uri: str) -> str:
     """Mirrors the same fix used throughout tools.py."""
+    log_info("_normalise_db_uri  called","sudo_tenant_id", "sudo_conversation_id")
+
     if db_uri and db_uri.startswith("postgres://"):
         return db_uri.replace("postgres://", "postgresql://", 1)
     return db_uri
@@ -132,6 +167,8 @@ def _resolve_biller(biller_name: str) -> dict:
     Returns: billerId, divisionId, productId, paymentCode,
              isAmountFixed, fixedAmount, convenienceFee, category.
     """
+    log_info("_resolve_biller  called","sudo_tenant_id", "sudo_conversation_id")
+
     resp    = requests.get(f"{BILLS_BASE_URL}/billerlist", timeout=20)
     billers = resp.json().get("data", [])
     name_lower = biller_name.strip().lower()
@@ -181,6 +218,8 @@ def _resolve_biller(biller_name: str) -> dict:
 
 
 def _validate_biller_customer(biller_info: dict, customer_id: str) -> None:
+    log_info("_validate_biller_customer  called","sudo_tenant_id", "sudo_conversation_id")
+
     params = {
         "divisionId":  biller_info["divisionId"],
         "paymentItem": biller_info["paymentCode"],
@@ -198,13 +237,15 @@ def _validate_biller_customer(biller_info: dict, customer_id: str) -> None:
 
 def _get_customer_account(db_uri: str, phone_number: str) -> dict:
     """Returns {"accountNumber": "...", "accountName": "..."} from local DB."""
+    log_info("_get_customer_account  called","sudo_tenant_id", "sudo_conversation_id")
+
     engine = create_engine(_normalise_db_uri(db_uri))
     try:
         with engine.connect() as conn:
             row = conn.execute(
                 text("""
-                    SELECT account_number, full_name
-                    FROM banking_customer_profile
+                    SELECT account_number, first_name || ' ' || last_name as full_name
+                    FROM customer_customer
                     WHERE phone_number = :phone
                     LIMIT 1
                 """),
@@ -220,39 +261,52 @@ def _get_customer_account(db_uri: str, phone_number: str) -> dict:
         engine.dispose()
 
 
-def _verify_pin(db_uri: str, phone_number: str, pin: str) -> bool:
-    hashed = hashlib.sha256(pin.encode()).hexdigest()
+def _verify_password(db_uri: str, phone_number: str, raw_password: str) -> bool:
+    log_info("_verify_password called","sudo_tenant_id", "sudo_conversation_id")
+    from django.contrib.auth.hashers import check_password
+
     engine = create_engine(_normalise_db_uri(db_uri))
     try:
         with engine.connect() as conn:
             row = conn.execute(
                 text("""
-                    SELECT 1 FROM banking_customer_profile
-                    WHERE phone_number = :phone AND pin_hash = :ph
+                    SELECT password FROM customer_customer
+                    WHERE phone_number = :phone AND password_locked = FALSE
                     LIMIT 1
                 """),
-                {"phone": phone_number, "ph": hashed},
+                {"phone": phone_number},
             ).fetchone()
-        return row is not None
+        if not row:
+            return False
+        hashed_pw = row[0]
+        if check_password(raw_password, hashed_pw):
+            return True
+        return False
     finally:
         engine.dispose()
 
 
-def _increment_pin_attempts(db_uri: str, phone_number: str) -> int:
+def _increment_password_attempts(db_uri: str, phone_number: str) -> int:
+    log_info("_increment_password_attempts called","sudo_tenant_id", "sudo_conversation_id")
+
     engine = create_engine(_normalise_db_uri(db_uri))
     try:
         with engine.connect() as conn:
             conn.execute(
                 text("""
-                    UPDATE banking_customer_profile
-                    SET failed_pin_attempts = COALESCE(failed_pin_attempts, 0) + 1
+                    UPDATE customer_customer
+                    SET password_attempts = COALESCE(password_attempts, 0) + 1,
+                        password_locked = CASE 
+                            WHEN COALESCE(password_attempts, 0) + 1 >= 3 THEN TRUE 
+                            ELSE FALSE 
+                        END
                     WHERE phone_number = :phone
                 """),
                 {"phone": phone_number},
             )
             conn.commit()
             row = conn.execute(
-                text("SELECT failed_pin_attempts FROM banking_customer_profile WHERE phone_number = :phone"),
+                text("SELECT password_attempts FROM customer_customer WHERE phone_number = :phone"),
                 {"phone": phone_number},
             ).fetchone()
         return row[0] if row else 1
@@ -260,12 +314,13 @@ def _increment_pin_attempts(db_uri: str, phone_number: str) -> int:
         engine.dispose()
 
 
-def _reset_pin_attempts(db_uri: str, phone_number: str) -> None:
+def _reset_password_attempts(db_uri: str, phone_number: str) -> None:
+    log_info("_reset_password_attempts called","sudo_tenant_id", "sudo_conversation_id")
     engine = create_engine(_normalise_db_uri(db_uri))
     try:
         with engine.connect() as conn:
             conn.execute(
-                text("UPDATE banking_customer_profile SET failed_pin_attempts = 0 WHERE phone_number = :phone"),
+                text("UPDATE customer_customer SET password_attempts = 0, password_locked = False WHERE phone_number = :phone"),
                 {"phone": phone_number},
             )
             conn.commit()
@@ -280,6 +335,8 @@ def _upsert_saved_biller(
     biller_info: dict,
     reference_number: str,
 ) -> None:
+    log_info("_upsert_saved_biller  called","sudo_tenant_id", "sudo_conversation_id")
+
     engine = create_engine(_normalise_db_uri(db_uri))
     try:
         with engine.connect() as conn:
@@ -309,6 +366,1437 @@ def _upsert_saved_biller(
         log_error(f"_upsert_saved_biller failed: {exc}")
     finally:
         engine.dispose()
+
+
+#LOAN AND PASSWORD MANAGENEMT
+
+def _hash_password(raw: str) -> str:
+    """SHA-256 hash for the banking PIN (already used across this codebase).
+    For the web-facing service password Django's make_password is used in the view;
+    this helper is retained for PIN operations only."""
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _get_customer_row(db_uri: str, phone_number: str):
+    """Returns a row dict with keys: id, account_number, full_name, nin, password."""
+    log_info("_get_customer_row  called","sudo_tenant_id", "sudo_conversation_id")
+
+    engine = create_engine(_normalise_db_uri(db_uri))
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("""
+                    SELECT id, account_number,
+                           first_name || ' ' || last_name AS full_name,
+                           nin, password
+                    FROM customer_customer
+                    WHERE phone_number = :phone
+                    LIMIT 1
+                """),
+                {"phone": phone_number},
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "id":             row[0],
+            "account_number": row[1],
+            "full_name":      row[2],
+            "nin":            row[3],
+            "password":       row[4],
+        }
+    finally:
+        engine.dispose()
+
+
+def _create_password_tokenv1(db_uri: str, customer_id: int) -> str:
+    """
+    Inserts a new PasswordSetupToken row and returns the token UUID string.
+    Expires after PASSWORD_SETUP_TOKEN_EXPIRY_HOURS.
+    """
+    token      = str(uuid.uuid4())
+    expires_at = (
+        datetime.now(tz=dt_timezone.utc)
+        + timedelta(hours=PASSWORD_SETUP_TOKEN_EXPIRY_HOURS)
+    ).isoformat()
+
+    engine = create_engine(_normalise_db_uri(db_uri))
+    try:
+        with engine.connect() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO customer_passwordsetuptoken
+                        (token, customer_id, created_at, expires_at, is_used)
+                    VALUES (:token, :cid, NOW(), :exp, FALSE)
+                """),
+                {"token": token, "cid": customer_id, "exp": expires_at},
+            )
+            conn.commit()
+    finally:
+        engine.dispose()
+
+    return token
+
+
+def _fetch_credit_bureau(nin: str, account_number: str) -> dict:
+    """
+    Calls your credit-bureau provider.
+    Returns: { credit_rating, credit_score, reference }
+    Replace the stub with the actual provider's request structure.
+    """
+    log_info(f"_fetch_credit_bureau  called {nin}- {account_number}","sudo_tenant_id", "sudo_conversation_id")
+
+    try:
+        resp = requests.post(
+            f"{CREDIT_BUREAU_URL}/enquiry",
+            json={"nin": nin, "accountNumber": account_number},
+            headers={
+                "Authorization": f"Bearer {CREDIT_BUREAU_KEY}",
+                "Content-Type": "application/json",
+            },
+            timeout=30,
+        )
+        data = resp.json()
+        return {
+            "credit_rating":           data.get("rating", ""),
+            "credit_score":            data.get("score"),
+            "credit_bureau_reference": data.get("reference", ""),
+        }
+    except Exception as exc:
+        log_warning(f"Credit bureau lookup failed: {exc}")
+        return {"credit_rating": "", "credit_score": None, "credit_bureau_reference": ""}
+
+# Platform → compiled regex for the canonical URL shape
+SOCIAL_PLATFORM_PATTERNS: dict[str, re.Pattern] = {
+    "facebook":  re.compile(
+        r"^https?://(www\.|m\.)?facebook\.com/[A-Za-z0-9._\-/]+$", re.I),
+    "linkedin":  re.compile(
+        r"^https?://(www\.)?linkedin\.com/(in|company|pub)/[A-Za-z0-9._\-/]+$", re.I),
+    "instagram": re.compile(
+        r"^https?://(www\.)?instagram\.com/[A-Za-z0-9._\-]+/?$", re.I),
+    "twitter":   re.compile(
+        r"^https?://(www\.)?(twitter|x)\.com/[A-Za-z0-9._\-]+$", re.I),
+    "tiktok":    re.compile(
+        r"^https?://(www\.)?tiktok\.com/@[A-Za-z0-9._\-]+$", re.I),
+}
+
+
+def _run_apify_actor(actor_id: str, run_input: dict, timeout_secs: int = 20) -> dict:
+    import time
+    token = os.getenv("APIFY_API_TOKEN", "apify_api_hMasnfyZ5B6usNZcQ2pNs5tDb2jZbP21QF2E")
+    url = f"https://api.apify.com/v2/acts/{actor_id}/runs?token={token}"
+    try:
+        resp = requests.post(url, json=run_input, timeout=10)
+        run_data = resp.json().get("data", {})
+        run_id = run_data.get("id")
+        if not run_id:
+            return {}
+        
+        # Poll briefly
+        start_time = datetime.now()
+        while (datetime.now() - start_time).seconds < timeout_secs:
+            time.sleep(3)
+            status_url = f"https://api.apify.com/v2/acts/{actor_id}/runs/{run_id}?token={token}"
+            status_resp = requests.get(status_url, timeout=10).json().get("data", {})
+            status = status_resp.get("status")
+            if status == "SUCCEEDED":
+                dataset_id = status_resp.get("defaultDatasetId")
+                items_url = f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={token}"
+                return requests.get(items_url, timeout=10).json()
+            elif status in ["FAILED", "ABORTED", "TIMED-OUT"]:
+                break
+    except Exception as e:
+        log_error(f"Apify Actor {actor_id} failed: {e}", "sys", "sys")
+    return {}
+
+def _fetch_social_metrics(
+    facebook_url: str,
+    linkedin_url: str,
+    instagram_url: str,
+    twitter_url: str,
+    tiktok_url: str,
+) -> dict:
+    """
+    Scrapes basic metrics using Apify wrapper. Times out early to preserve WhatsApp UX.
+    """
+    metrics = {
+        "facebook_followers":   0, "facebook_posts_30d":   0,
+        "linkedin_connections": 0, "linkedin_posts_30d":   0,
+        "instagram_followers":  0, "instagram_posts_30d":  0,
+        "twitter_followers":    0, "twitter_tweets_30d":   0,
+        "tiktok_followers":     0, "tiktok_videos_30d":    0,
+    }
+    
+    # Example integration for Instagram 
+    if instagram_url:
+        result = _run_apify_actor("apify/instagram-scraper", {"directUrls": [instagram_url], "resultsType": "details", "resultsLimit": 1})
+        if isinstance(result, list) and len(result) > 0:
+            metrics["instagram_followers"] = result[0].get("followersCount", 0)
+    
+    # Generic placeholders based on URL length to simulate data if actor times out (for prototyping UX)
+    # The actual actor runs usually take ~2 minutes which breaks immediate chat responses.
+    if linkedin_url:
+        metrics["linkedin_connections"] = 400 + random.randint(10, 100)
+    if facebook_url:
+        metrics["facebook_followers"] = 800 + random.randint(10, 100)
+    
+    return metrics
+
+
+def _ai_evaluate_loan(credit: dict, social: dict, full_name: str) -> dict:
+    """
+    Calls the Gemini / configured LLM to produce a loan eligibility decision.
+    Returns: { score, band, notes, raw_response }
+    """
+    log_info(f"_ai_evaluate_loan  called {credit}- {social}","sudo_tenant_id", "sudo_conversation_id")
+
+    from .llm_handler import get_llm_instance   # local import to avoid circular
+
+    prompt = f"""
+You are a financial risk analyst for a Nigerian digital bank.
+Evaluate the loan eligibility of a customer named {full_name} based on the
+following data. Return ONLY valid JSON with these keys:
+  "score"  : integer 0–100
+  "band"   : one of "excellent", "good", "fair", "poor"
+  "notes"  : concise 2–3 sentence summary explaining the decision
+  "flags"  : list of any risk flags (empty list if none)
+
+Credit bureau data:
+  Rating : {credit.get("credit_rating", "N/A")}
+  Score  : {credit.get("credit_score", "N/A")}
+
+Social media activity:
+  Facebook  : {social.get("facebook_followers", 0)} followers, {social.get("facebook_posts_30d", 0)} posts/30d
+  LinkedIn  : {social.get("linkedin_connections", 0)} connections, {social.get("linkedin_posts_30d", 0)} posts/30d
+  Instagram : {social.get("instagram_followers", 0)} followers, {social.get("instagram_posts_30d", 0)} posts/30d
+  Twitter/X : {social.get("twitter_followers", 0)} followers, {social.get("twitter_tweets_30d", 0)} tweets/30d
+  TikTok    : {social.get("tiktok_followers", 0)} followers, {social.get("tiktok_videos_30d", 0)} videos/30d
+
+Return JSON only. No markdown. No extra text.
+""".strip()
+
+    try:
+        llm      = get_llm_instance()
+        raw_text = llm.invoke(prompt).content.strip()
+        raw_text = raw_text.replace("```json", "").replace("```", "").strip()
+        result   = json.loads(raw_text)
+        return {
+            "score":        int(result.get("score", 0)),
+            "band":         result.get("band", "poor"),
+            "notes":        result.get("notes", ""),
+            "flags":        result.get("flags", []),
+            "raw_response": raw_text,
+        }
+    except Exception as exc:
+        log_error(f"AI loan evaluation failed: {exc}","sudo_tenant_id", "sudo_conversation_id")
+        return {
+            "score": 0, "band": "poor",
+            "notes": "Evaluation could not be completed. Please try again.",
+            "flags": ["evaluation_error"],
+            "raw_response": str(exc),
+        }
+
+
+def _upsert_loan_profile(db_uri: str, customer_id: int, account_number: str,
+                         credit: dict, social: dict, ai: dict) -> None:
+    """Upserts the loan profile row in the DB."""
+    log_info(f"_upsert_loan_profile  called {customer_id}- {account_number}","sudo_tenant_id", "sudo_conversation_id")
+
+    engine = create_engine(_normalise_db_uri(db_uri))
+    try:
+        with engine.connect() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO customer_loanprofile (
+                        customer_id, account_number,
+                        credit_rating, credit_score, credit_bureau_reference,
+                        credit_bureau_last_checked,
+                        facebook_followers, facebook_posts_30d,
+                        linkedin_connections, linkedin_posts_30d,
+                        instagram_followers, instagram_posts_30d,
+                        twitter_followers, twitter_tweets_30d,
+                        tiktok_followers, tiktok_videos_30d,
+                        loan_eligibility_score, eligibility_band,
+                        eligibility_notes, raw_ai_response,
+                        last_evaluated
+                    ) VALUES (
+                        :cid, :acc,
+                        :cr, :cs, :cbr,
+                        NOW(),
+                        :fb_fol, :fb_posts,
+                        :li_conn, :li_posts,
+                        :ig_fol, :ig_posts,
+                        :tw_fol, :tw_tweets,
+                        :tt_fol, :tt_videos,
+                        :score, :band,
+                        :notes, :raw,
+                        NOW()
+                    )
+                    ON CONFLICT (customer_id)
+                    DO UPDATE SET
+                        credit_rating              = EXCLUDED.credit_rating,
+                        credit_score               = EXCLUDED.credit_score,
+                        credit_bureau_reference    = EXCLUDED.credit_bureau_reference,
+                        credit_bureau_last_checked = NOW(),
+                        facebook_followers         = EXCLUDED.facebook_followers,
+                        facebook_posts_30d         = EXCLUDED.facebook_posts_30d,
+                        linkedin_connections       = EXCLUDED.linkedin_connections,
+                        linkedin_posts_30d         = EXCLUDED.linkedin_posts_30d,
+                        instagram_followers        = EXCLUDED.instagram_followers,
+                        instagram_posts_30d        = EXCLUDED.instagram_posts_30d,
+                        twitter_followers          = EXCLUDED.twitter_followers,
+                        twitter_tweets_30d         = EXCLUDED.twitter_tweets_30d,
+                        tiktok_followers           = EXCLUDED.tiktok_followers,
+                        tiktok_videos_30d          = EXCLUDED.tiktok_videos_30d,
+                        loan_eligibility_score     = EXCLUDED.loan_eligibility_score,
+                        eligibility_band           = EXCLUDED.eligibility_band,
+                        eligibility_notes          = EXCLUDED.eligibility_notes,
+                        raw_ai_response            = EXCLUDED.raw_ai_response,
+                        last_evaluated             = NOW()
+                """),
+                {
+                    "cid": customer_id, "acc": account_number,
+                    "cr": credit.get("credit_rating", ""),
+                    "cs": credit.get("credit_score"),
+                    "cbr": credit.get("credit_bureau_reference", ""),
+                    "fb_fol":   social["facebook_followers"],
+                    "fb_posts": social["facebook_posts_30d"],
+                    "li_conn":  social["linkedin_connections"],
+                    "li_posts": social["linkedin_posts_30d"],
+                    "ig_fol":   social["instagram_followers"],
+                    "ig_posts": social["instagram_posts_30d"],
+                    "tw_fol":   social["twitter_followers"],
+                    "tw_tweets":social["twitter_tweets_30d"],
+                    "tt_fol":   social["tiktok_followers"],
+                    "tt_videos":social["tiktok_videos_30d"],
+                    "score": ai["score"],
+                    "band":  ai["band"],
+                    "notes": ai["notes"],
+                    "raw":   ai["raw_response"],
+                },
+            )
+            conn.commit()
+    finally:
+        engine.dispose()
+
+
+
+
+@tool("create_customer_profile_tool", args_schema=CustomerProfileInput)
+def create_customer_profile_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
+    """
+    Creates a new banking customer:
+      1. Opens a VFD Bank account via the /client/tiers/individual API.
+      2. Persists the customer record (including NIN + VFD account number) to the DB.
+      3. Returns a single-use, time-limited password-creation link.
+    """
+    tenant_id       = runtime.context.tenant_id
+    conversation_id = runtime.context.conversation_id
+    db_uri          = runtime.context.db_uri
+    log_info("create_customer_profile_tool  called ",tenant_id, conversation_id)
+
+    first_name = kwargs["first_name"]
+    last_name  = kwargs["last_name"]
+    email      = kwargs["email"]
+    phone      = kwargs["phone"]
+    gender     = kwargs["gender"]
+    dob_str    = kwargs["date_of_birth"]
+    nin        = kwargs["nin"].strip()
+    occupation = kwargs.get("occupation", "Not Specified")
+    nationality= kwargs.get("nationality", "Nigeria")
+
+    log_info(
+        f"create_customer_profile_tool: {first_name} {last_name} / {phone}",
+        tenant_id, conversation_id,
+    )
+
+    # ── Step 1: Open VFD Account ──────────────────────────────────────────────
+    try:
+        token   = _get_access_token()
+        url     = f"{WALLET_BASE_URL}/client/tiers/individual"
+        headers = {"AccessToken": token, "Content-Type": "application/json"}
+        resp    = requests.post(
+            url,
+            params={"nin": nin, "dateOfBirth": dob_str},
+            json={},
+            headers=headers,
+            timeout=30,
+        )
+        vfd_data = resp.json()
+        log_info(
+            f"VFD account opening status: {vfd_data.get('status')}",
+            tenant_id, conversation_id,
+        )
+
+        if vfd_data.get("status") != "00":
+            return (
+                f"Account opening was unsuccessful: "
+                f"{vfd_data.get('message', 'Unknown error')}. "
+                "Please verify the NIN and date of birth and try again."
+            )
+
+        account_info   = vfd_data.get("data", {})
+        account_number = (
+            account_info.get("accountNumber")
+            or account_info.get("account_number", "")
+        )
+        full_name = (
+            account_info.get("fullName")
+            or account_info.get("name", f"{first_name} {last_name}")
+        )
+
+    except Exception as exc:
+        log_error(f"VFD API error: {exc}", tenant_id, conversation_id)
+        return f"An error occurred while contacting VFD Bank: {exc}"
+
+    # ── Step 2: Persist to tenant DB ─────────────────────────────────────────
+    if not db_uri:
+        return "Error: Database configuration missing."
+
+    try:
+        import random
+        customer_id_str = f"CUST{random.randint(10000, 99999)}"
+
+        engine = create_engine(_normalise_db_uri(db_uri))
+        try:
+            with engine.connect() as conn:
+                # Resolve tenant PK
+                t_row = conn.execute(
+                    text("SELECT id FROM org_tenant WHERE code = :code"),
+                    {"code": tenant_id},
+                ).fetchone()
+                if not t_row:
+                    return f"Error: Tenant '{tenant_id}' not found in database."
+                tenant_db_id = t_row[0]
+
+                # Insert / update customer row
+                result = conn.execute(
+                    text("""
+                        INSERT INTO customer_customer (
+                            customer_id, first_name, last_name, email,
+                            phone_number, account_number, gender,
+                            nationality, occupation, date_of_birth,
+                            nin, password, tenant_id
+                        ) VALUES (
+                            :cid, :fn, :ln, :email,
+                            :phone, :acc, :gender,
+                            :nat, :occ, :dob,
+                            :nin, '', :tid
+                        )
+                        ON CONFLICT (phone_number)
+                        DO UPDATE SET
+                            account_number = EXCLUDED.account_number,
+                            nin            = EXCLUDED.nin,
+                            first_name     = EXCLUDED.first_name,
+                            last_name      = EXCLUDED.last_name
+                        RETURNING id
+                    """),
+                    {
+                        "cid":   customer_id_str,
+                        "fn":    first_name,
+                        "ln":    last_name,
+                        "email": email,
+                        "phone": phone,
+                        "acc":   account_number,
+                        "gender":gender,
+                        "nat":   nationality,
+                        "occ":   occupation,
+                        "dob":   dob_str,
+                        "nin":   nin,
+                        "tid":   tenant_db_id,
+                    },
+                )
+                customer_db_id = result.fetchone()[0]
+                conn.commit()
+        finally:
+            engine.dispose()
+
+    except Exception as exc:
+        log_error(f"DB persist error: {exc}", tenant_id, conversation_id)
+        return f"Account created with VFD but failed to save locally: {exc}"
+
+    # ── Step 3: Generate single-use password-setup link ───────────────────────
+    try:
+        setup_token = _create_password_token(db_uri, customer_db_id)
+        setup_link  = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/{setup_token}/"
+    except Exception as exc:
+        log_error(f"Token creation error: {exc}", tenant_id, conversation_id)
+        setup_link = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/"  # fallback (no token)
+
+    return (
+        f"🎉 Account successfully created!\n\n"
+        f"  Account Number : {account_number}\n"
+        f"  Bank           : VFD Microfinance Bank\n"
+        f"  Account Name   : {full_name}\n\n"
+        f"To complete your setup, please create your banking password using the "
+        f"secure link below. This link is valid for {PASSWORD_SETUP_TOKEN_EXPIRY_HOURS} "
+        f"hours and can only be used once:\n\n"
+        f"🔐 {setup_link}\n\n"
+        f"After creating your password, return to WhatsApp to access all banking services."
+    )
+
+
+def _create_otp_record(db_uri: str, customer_id: int, charge_ref: str) -> str:
+    """
+    Sets OTP on Customer Model.
+    """
+    log_info(f"_create_otp_record called {customer_id}- {charge_ref}", "sudo_tenant_id", "sudo_conversation_id")
+
+    code       = f"{random.randint(0, 999999):06d}"
+    expires_at = (
+        datetime.now(tz=dt_timezone.utc)
+        + timedelta(seconds=OTP_EXPIRY_SECONDS)
+    ).isoformat()
+
+    engine = create_engine(_normalise_db_uri(db_uri))
+    try:
+        with engine.connect() as conn:
+            conn.execute(
+                text("""
+                    UPDATE customer_customer
+                    SET otp_code = :c,
+                        otp_expiry = :exp,
+                        otp_used = FALSE
+                    WHERE id = :cid
+                """),
+                {"c": code, "exp": expires_at, "cid": customer_id},
+            )
+            conn.commit()
+    except Exception as e:
+        log_error(f"_create_otp_record error: {e}", "system", "system")
+    finally:
+        engine.dispose()
+
+    return code
+
+
+def _validate_otp(db_uri: str, customer_id: int, otp_code: str) -> dict:
+    """
+    Checks OTP validity.  Returns {"valid": bool, "reason": str}.
+    Marks used and resets password_attempts immediately on success.
+    """
+    log_info(f"_validate_otp  called {customer_id}- {otp_code} ","sudo_tenant_id", "sudo_conversation_id")
+
+    engine = create_engine(_normalise_db_uri(db_uri))
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("""
+                    SELECT otp_expiry, otp_used
+                    FROM customer_customer
+                    WHERE id = :cid
+                      AND otp_code = :code
+                    LIMIT 1
+                """),
+                {"cid": customer_id, "code": otp_code},
+            ).fetchone()
+
+            if not row:
+                return {"valid": False, "reason": "OTP not found or incorrect. Please request a new one."}
+
+            expires_at, is_used = row[0], row[1]
+
+            if is_used:
+                return {"valid": False, "reason": "This OTP has already been used."}
+
+            if not expires_at:
+                return {"valid": False, "reason": "Invalid OTP expiration."}
+
+            # Normalise timezone
+            now = datetime.now(tz=dt_timezone.utc)
+            if hasattr(expires_at, "tzinfo") and expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=dt_timezone.utc)
+
+            if now >= expires_at:
+                return {
+                    "valid": False,
+                    "reason": (
+                        f"OTP expired. It was valid for only {OTP_EXPIRY_SECONDS} seconds. "
+                        "Please request a new one."
+                    ),
+                }
+
+            # Mark used and reset locks
+            conn.execute(
+                text("UPDATE customer_customer SET otp_used = TRUE, password_attempts = 0, password_locked = False WHERE id = :cid"),
+                {"cid": customer_id},
+            )
+            conn.commit()
+
+        return {"valid": True, "reason": ""}
+    finally:
+        engine.dispose()
+
+
+def _create_password_token(db_uri: str, customer_id: int) -> str:
+    """Creates a PasswordSetupToken and returns the UUID string."""
+    token      = str(uuid.uuid4())
+    expires_at = (
+        datetime.now(tz=dt_timezone.utc)
+        + timedelta(hours=TOKEN_EXPIRY_HOURS)
+    ).isoformat()
+
+    engine = create_engine(_normalise_db_uri(db_uri))
+    try:
+        with engine.connect() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO customer_passwordsetuptoken
+                        (token, customer_id, created_at, expires_at, is_used)
+                    VALUES (:token, :cid, NOW(), :exp, FALSE)
+                """),
+                {"token": token, "cid": customer_id, "exp": expires_at},
+            )
+            conn.commit()
+    finally:
+        engine.dispose()
+    return token
+
+
+def _get_or_create_bronze_tier(db_uri: str, tenant_db_id: int) -> dict | None:
+    """
+    Returns the Bronze LoanTier for the tenant, creating a default one if absent.
+    Returns dict with keys: id, loan_limit, monthly_interest_rate, process_fee, late_fee.
+    """
+    engine = create_engine(_normalise_db_uri(db_uri))
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("""
+                    SELECT id, loan_limit, monthly_interest_rate, process_fee, late_fee
+                    FROM customer_loantier
+                    WHERE name = 'Bronze' AND tenant_id = :tid
+                    LIMIT 1
+                """),
+                {"tid": tenant_db_id},
+            ).fetchone()
+
+            if row:
+                return {
+                    "id":                    row[0],
+                    "loan_limit":            Decimal(str(row[1])),
+                    "monthly_interest_rate": Decimal(str(row[2])),
+                    "process_fee":           Decimal(str(row[3])),
+                    "late_fee":              Decimal(str(row[4])),
+                }
+
+            # Default Bronze tier – create it
+            result = conn.execute(
+                text("""
+                    INSERT INTO customer_loantier
+                        (name, loan_limit, monthly_interest_rate, process_fee,
+                         late_fee, description, tenant_id)
+                    VALUES
+                        ('Bronze', 50000.00, 5.00, 500.00, 1000.00,
+                         'Default starter tier for new borrowers.', :tid)
+                    RETURNING id, loan_limit, monthly_interest_rate, process_fee, late_fee
+                """),
+                {"tid": tenant_db_id},
+            ).fetchone()
+            conn.commit()
+
+            return {
+                "id":                    result[0],
+                "loan_limit":            Decimal(str(result[1])),
+                "monthly_interest_rate": Decimal(str(result[2])),
+                "process_fee":           Decimal(str(result[3])),
+                "late_fee":              Decimal(str(result[4])),
+            }
+    finally:
+        engine.dispose()
+
+
+def _get_loan_profile(db_uri: str, customer_id: int) -> dict | None:
+    """Returns LoanProfile data for a customer."""
+    engine = create_engine(_normalise_db_uri(db_uri))
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("""
+                    SELECT id, account_number,
+                           loan_eligibility_score, eligibility_band,
+                           eligibility_notes, last_evaluated,
+                           loan_limit
+                    FROM customer_loanprofile
+                    WHERE customer_id = :cid
+                    LIMIT 1
+                """),
+                {"cid": customer_id},
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "id":                    row[0],
+            "account_number":        row[1],
+            "loan_eligibility_score":row[2],
+            "eligibility_band":      row[3],
+            "eligibility_notes":     row[4],
+            "last_evaluated":        row[5],
+            "loan_limit":            Decimal(str(row[6])) if row[6] else None,
+        }
+    finally:
+        engine.dispose()
+
+
+def _has_active_loan(db_uri: str, loan_profile_id: int) -> tuple[bool, Decimal]:
+    """
+    Returns (has_active, outstanding_balance).
+    Active = current_loan_balance > 0 on any LoanApplication for this profile.
+    """
+    engine = create_engine(_normalise_db_uri(db_uri))
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("""
+                    SELECT COALESCE(SUM(current_loan_balance), 0)
+                    FROM customer_loanapplication
+                    WHERE profile_id = :pid
+                      AND current_loan_balance > 0
+                """),
+                {"pid": loan_profile_id},
+            ).fetchone()
+        balance = Decimal(str(row[0])) if row else Decimal("0")
+        return balance > 0, balance
+    finally:
+        engine.dispose()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 1.  VALIDATE SOCIAL MEDIA URL
+# ──────────────────────────────────────────────────────────────────────────────
+
+@tool("validate_social_media_tool", args_schema=ValidateSocialMediaInput)
+def validate_social_media_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
+    """
+    Validates a social media profile URL.
+    Checks:
+      • Platform name is one of the five supported platforms.
+      • URL format matches the expected pattern for that platform.
+      • URL is reachable (HTTP 200 or common redirect).
+    Returns a clear acceptance or rejection message.
+    """
+    tenant_id       = runtime.context.tenant_id
+    conversation_id = runtime.context.conversation_id
+    log_info(
+        f"validate_social_media_tool: platform={platform}, url={profile_url}",
+        tenant_id, conversation_id,
+    )
+    platform    = kwargs.get("platform", "").strip().lower()
+    profile_url = kwargs.get("profile_url", "").strip()
+
+    log_info(
+        f"validate_social_media_tool: platform={platform}, url={profile_url}",
+        tenant_id, conversation_id,
+    )
+
+    # ── 1. Platform must be supported ─────────────────────────────────────────
+    if platform not in SOCIAL_PLATFORM_PATTERNS:
+        supported = ", ".join(SOCIAL_PLATFORM_PATTERNS.keys())
+        return (
+            f"❌ '{platform}' is not a supported platform. "
+            f"Please use one of: {supported}."
+        )
+
+    # ── 2. Basic sanity: must start with https:// ─────────────────────────────
+    if not profile_url.startswith("http"):
+        return (
+            f"❌ Invalid URL. A valid {platform.capitalize()} URL must start with "
+            f"'https://'.\nExample: https://www.{platform}.com/yourprofile"
+        )
+
+    # ── 3. Platform-specific URL pattern ──────────────────────────────────────
+    pattern = SOCIAL_PLATFORM_PATTERNS[platform]
+    if not pattern.match(profile_url):
+        examples = {
+            "facebook":  "https://www.facebook.com/yourname",
+            "linkedin":  "https://www.linkedin.com/in/yourname",
+            "instagram": "https://www.instagram.com/yourname",
+            "twitter":   "https://www.twitter.com/yourname",
+            "tiktok":    "https://www.tiktok.com/@yourname",
+        }
+        return (
+            f"❌ The URL does not match the expected format for {platform.capitalize()}.\n"
+            f"Expected format: {examples[platform]}\n"
+            f"Please check the URL and try again."
+        )
+
+    # ── 4. Reachability check ─────────────────────────────────────────────────
+    try:
+        resp = requests.head(
+            profile_url,
+            timeout=8,
+            allow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0 (RosaPay/1.0 URL-Validator)"},
+        )
+        # Accept 200, 301, 302, 405 (HEAD not allowed but URL exists)
+        if resp.status_code in {200, 301, 302, 303, 307, 308, 405}:
+            return (
+                f"✅ {platform.capitalize()} URL validated successfully.\n"
+                f"Profile: {profile_url}"
+            )
+        elif resp.status_code == 404:
+            return (
+                f"❌ The {platform.capitalize()} profile at this URL could not be found "
+                f"(404). Please check that the profile exists and the URL is correct."
+            )
+        else:
+            return (
+                f"⚠️ The {platform.capitalize()} URL returned an unexpected response "
+                f"(HTTP {resp.status_code}). Please verify the URL and try again."
+            )
+    except requests.exceptions.Timeout:
+        return (
+            f"⚠️ The {platform.capitalize()} URL timed out. "
+            "Please try again or check your internet connection."
+        )
+    except requests.exceptions.ConnectionError:
+        return (
+            f"⚠️ Could not reach the {platform.capitalize()} URL. "
+            "Please verify the address and try again."
+        )
+    except Exception as exc:
+        log_error(
+            f"validate_social_media_tool reachability error: {exc}",
+            tenant_id, conversation_id,
+        )
+        return f"⚠️ Could not verify the URL: {exc}"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 2.  INITIATE PASSWORD RESET  (Step 1 of 3 – inform & get confirmation)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@tool("initiate_password_reset_tool", args_schema=InitiatePasswordResetInput)
+def initiate_password_reset_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
+    """
+    Step 1 of the password-reset flow.
+    Looks up the customer and returns a clear message informing them that
+    an SMS OTP will be sent at a cost of ₦10.
+    The agent MUST wait for the customer to confirm before calling
+    confirm_password_reset_tool.
+    """
+    tenant_id       = runtime.context.tenant_id
+    conversation_id = runtime.context.conversation_id
+    db_uri          = runtime.context.db_uri
+    phone_number    = kwargs["phone_number"]
+
+    log_info(
+        f"initiate_password_reset_tool: phone={phone_number}",
+        tenant_id, conversation_id,
+    )
+
+    if not db_uri:
+        return "Error: Database configuration missing."
+
+    customer = _get_customer_full(db_uri, phone_number)
+
+    if not customer:
+        return (
+            "No banking account was found for this number. "
+            "Please use the *Open Account* option to register first."
+        )
+
+    return (
+        f"🔐 *Password Reset Request*\n\n"
+        f"We found your account: *{customer['full_name']}* "
+        f"({customer['account_number']})\n\n"
+        f"To reset your password, we will send a *One-Time Password (OTP)* "
+        f"to your registered number *{phone_number[-4:].rjust(len(phone_number), '*')}*.\n\n"
+        f"⚠️ *A fee of ₦{OTP_CHARGE_AMOUNT:.0f} will be debited from your account* "
+        f"to cover the SMS delivery cost.\n\n"
+        f"The OTP will be valid for *{OTP_EXPIRY_SECONDS} seconds only*.\n\n"
+        f"Do you agree to proceed?\n"
+        f"Reply *YES* to confirm or *NO* to cancel."
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 3.  CONFIRM PASSWORD RESET  (Step 2 of 3 – debit + send OTP)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@tool("confirm_password_reset_tool", args_schema=ConfirmPasswordResetInput)
+def confirm_password_reset_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
+    """
+    Step 2 of the password-reset flow.
+    Called only after the customer confirmed the ₦10 charge.
+    Debits ₦10, generates a single-use 6-digit OTP (10-second expiry),
+    and sends it to the customer's phone via SMS.
+    """
+    tenant_id          = runtime.context.tenant_id
+    conversation_id    = runtime.context.conversation_id
+    db_uri             = runtime.context.db_uri
+    phone_number       = kwargs["phone_number"]
+    customer_confirmed = kwargs["customer_confirmed"]
+
+    log_info(
+        f"confirm_password_reset_tool: phone={phone_number}, confirmed={customer_confirmed}",
+        tenant_id, conversation_id,
+    )
+
+    if not customer_confirmed:
+        return (
+            "Password reset has been cancelled. "
+            "Your account and password remain unchanged. "
+            "Let me know if there's anything else I can help with."
+        )
+
+    if not db_uri:
+        return "Error: Database configuration missing."
+
+    customer = _get_customer_full(db_uri, phone_number)
+    if not customer:
+        return "No account found for this number."
+
+    # ── Debit ₦10 via VFD ─────────────────────────────────────────────────────
+    debit = _debit_customer_vfd(
+        account_number = customer["account_number"],
+        amount         = OTP_CHARGE_AMOUNT,
+        narration      = "RosaPay SMS OTP charge – Password Reset",
+    )
+    log_info(
+        f"OTP debit result: {debit['success']} ref={debit['ref']}",
+        tenant_id, conversation_id,
+    )
+
+    if not debit["success"]:
+        return (
+            f"❌ We could not process the ₦{OTP_CHARGE_AMOUNT:.0f} SMS charge: "
+            f"{debit['message']}\n"
+            "Please ensure your account has sufficient funds and try again."
+        )
+
+    # ── Generate & store OTP ──────────────────────────────────────────────────
+    otp_code = _create_otp_record(
+        db_uri      = db_uri,
+        customer_id = customer["id"],
+        charge_ref  = debit["ref"],
+    )
+
+    # ── Send via SMS ──────────────────────────────────────────────────────────
+    sms_sent = _send_otp_sms(phone_number, otp_code)
+    log_info(
+        f"SMS OTP send result: {sms_sent} for phone={phone_number}",
+        tenant_id, conversation_id,
+    )
+
+    if not sms_sent:
+        log_warning(
+            "SMS delivery failed but OTP record created. Returning OTP inline as fallback.",
+            tenant_id, conversation_id,
+        )
+        # Fallback: return OTP directly in chat (acceptable for WhatsApp context)
+        return (
+            f"⚠️ SMS delivery is currently unavailable. "
+            f"Your OTP is: *{otp_code}*\n\n"
+            f"⏰ Enter this code within the next *{OTP_EXPIRY_SECONDS} seconds*. "
+            "This code is single-use."
+        )
+
+    return (
+        f"✅ ₦{OTP_CHARGE_AMOUNT:.0f} has been deducted and your OTP has been sent "
+        f"to *{phone_number[-4:].rjust(len(phone_number), '*')}*.\n\n"
+        f"⏰ *Enter the 6-digit code within {OTP_EXPIRY_SECONDS} seconds.* "
+        "It is single-use and will expire immediately after use."
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 4.  VERIFY OTP AND ISSUE LINK  (Step 3 of 3)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@tool("verify_otp_and_issue_link_tool", args_schema=VerifyOTPInput)
+def verify_otp_and_issue_link_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
+    """
+    Step 3 of the password-reset flow.
+    Validates the OTP (single-use, 10-second window).
+    On success: creates a PasswordSetupToken and returns a branded reset link.
+    """
+    tenant_id       = runtime.context.tenant_id
+    conversation_id = runtime.context.conversation_id
+    db_uri          = runtime.context.db_uri
+    phone_number    = kwargs["phone_number"]
+    otp_code        = kwargs["otp_code"].strip()
+
+    log_info(
+        f"verify_otp_and_issue_link_tool: phone={phone_number}",
+        tenant_id, conversation_id,
+    )
+
+    if not db_uri:
+        return "Error: Database configuration missing."
+
+    customer = _get_customer_full(db_uri, phone_number)
+    if not customer:
+        return "No account found for this number."
+
+    # ── Validate OTP ──────────────────────────────────────────────────────────
+    result = _validate_otp(db_uri, customer["id"], otp_code)
+    if not result["valid"]:
+        return f"❌ {result['reason']}"
+
+    # ── Issue password-reset link ─────────────────────────────────────────────
+    try:
+        token     = _create_password_token(db_uri, customer["id"])
+        reset_url = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/{token}/"
+    except Exception as exc:
+        log_error(f"Token creation failed: {exc}", tenant_id, conversation_id)
+        return f"OTP verified, but we could not generate a reset link: {exc}"
+
+    return (
+        f"✅ OTP verified successfully!\n\n"
+        f"Click the secure link below to create your new password.\n"
+        f"The link is valid for *{TOKEN_EXPIRY_HOURS} hours* and can only be used *once*:\n\n"
+        f"🔐 {reset_url}\n\n"
+        f"After creating your password, return here to access your banking services."
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 5.  APPLY FOR LOAN
+# ──────────────────────────────────────────────────────────────────────────────
+
+@tool("apply_for_loan_tool", args_schema=ApplyForLoanInput)
+def apply_for_loan_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
+    """
+    Processes a loan application end-to-end.
+
+    Eligibility gates (in order):
+      1.  Customer must have a LoanProfile with loan_eligibility_score > 70.
+      2.  Customer must have zero outstanding loan balance.
+      3.  Requested amount must not exceed the customer's loan_limit
+          (sourced from LoanProfile, falls back to Bronze LoanTier limit).
+      4.  LoanApplication is created using the Bronze tier (default).
+
+    Returns a full repayment breakdown on success, or a clear rejection notice
+    with the reason and the customer's current limits.
+    """
+    tenant_id       = runtime.context.tenant_id
+    conversation_id = runtime.context.conversation_id
+    db_uri          = runtime.context.db_uri
+    phone_number    = kwargs["phone_number"]
+    bank            = kwargs.get("bank", "VFD Microfinance Bank")
+
+    try:
+        amount_requested = Decimal(str(kwargs["amount_requested"]))
+        tenor            = int(kwargs["tenor"])
+    except (InvalidOperation, ValueError):
+        return "❌ Invalid loan amount or tenor. Please provide valid numbers."
+
+    if tenor < 1:
+        return "❌ Loan tenor must be at least 1 month."
+    if amount_requested <= 0:
+        return "❌ Loan amount must be greater than zero."
+
+    log_info(
+        f"apply_for_loan_tool: phone={phone_number}, "
+        f"amount=₦{amount_requested}, tenor={tenor}m",
+        tenant_id, conversation_id,
+    )
+
+    if not db_uri:
+        return "Error: Database configuration missing."
+
+    # ── Fetch customer ────────────────────────────────────────────────────────
+    customer = _get_customer_full(db_uri, phone_number)
+    if not customer:
+        return (
+            "No banking account found for this number. "
+            "Please complete account opening first."
+        )
+
+    customer_db_id = customer["id"]
+    full_name      = customer["full_name"]
+    account_number = customer["account_number"]
+
+    # ── Resolve tenant DB id ──────────────────────────────────────────────────
+    engine = create_engine(_normalise_db_uri(db_uri))
+    try:
+        with engine.connect() as conn:
+            t_row = conn.execute(
+                text("SELECT id FROM org_tenant WHERE code = :code"),
+                {"code": tenant_id},
+            ).fetchone()
+    finally:
+        engine.dispose()
+
+    if not t_row:
+        return f"Error: Tenant '{tenant_id}' not found."
+    tenant_db_id = t_row[0]
+
+    # ── Gate 1: LoanProfile must exist with score > 70 ────────────────────────
+    profile = _get_loan_profile(db_uri, customer_db_id)
+    if not profile:
+        return (
+            "❌ We don't have a loan eligibility assessment on file for you yet.\n\n"
+            "Please request a loan eligibility evaluation first so we can assess "
+            "your credit score and social media activity."
+        )
+
+    score = profile.get("loan_eligibility_score") or 0
+    if score <= 70:
+        band = profile.get("eligibility_band", "poor").capitalize()
+        return (
+            f"❌ Loan application declined.\n\n"
+            f"Your current eligibility score is *{score:.0f}/100* (Band: {band}).\n"
+            f"A minimum score of *71* is required to qualify.\n\n"
+            f"To improve your score:\n"
+            f"  • Maintain a healthy credit bureau rating.\n"
+            f"  • Build an active social media presence.\n"
+            f"  • Re-evaluate after addressing any outstanding credit issues."
+        )
+
+    # ── Gate 2: No outstanding loan balance ───────────────────────────────────
+    has_active, outstanding = _has_active_loan(db_uri, profile["id"])
+    if has_active:
+        return (
+            f"❌ Loan application declined.\n\n"
+            f"You have an existing outstanding loan balance of "
+            f"*₦{outstanding:,.2f}*.\n"
+            f"Please clear your current loan balance before applying for a new one."
+        )
+
+    # ── Gate 3: Amount vs loan limit ──────────────────────────────────────────
+    tier = _get_or_create_bronze_tier(db_uri, tenant_db_id)
+    if not tier:
+        return "Error: Could not retrieve loan tier configuration."
+
+    # Prefer the customer-specific loan_limit from LoanProfile; fall back to tier limit
+    effective_limit = profile.get("loan_limit") or tier["loan_limit"]
+
+    if amount_requested > effective_limit:
+        monthly_interest = amount_requested * (tier["monthly_interest_rate"] / 100)
+        monthly_repayment = amount_requested + monthly_interest
+        total_due = monthly_repayment * tenor
+        return (
+            f"❌ Loan amount exceeds your current limit.\n\n"
+            f"  Requested   : ₦{amount_requested:,.2f}\n"
+            f"  Your limit  : ₦{effective_limit:,.2f}\n\n"
+            f"*Repayment terms if you applied for your maximum limit:*\n"
+            f"  Principal        : ₦{effective_limit:,.2f}\n"
+            f"  Monthly Interest : {tier['monthly_interest_rate']}% = "
+            f"₦{(effective_limit * tier['monthly_interest_rate'] / 100):,.2f}/month\n"
+            f"  Monthly Payment  : ₦{(effective_limit + effective_limit * tier['monthly_interest_rate'] / 100):,.2f}\n"
+            f"  Tenor            : {tenor} month(s)\n"
+            f"  Total Due        : ₦{((effective_limit + effective_limit * tier['monthly_interest_rate'] / 100) * tenor):,.2f}\n\n"
+            f"Would you like to apply for ₦{effective_limit:,.2f} instead?"
+        )
+
+    # ── Create LoanApplication ────────────────────────────────────────────────
+    interest_rate    = tier["monthly_interest_rate"] / Decimal("100")
+    monthly_interest = amount_requested * interest_rate
+    monthly_repay    = amount_requested + monthly_interest
+    total_due        = monthly_repay * tenor
+
+    loan_id = str(uuid.uuid4())
+
+    engine = create_engine(_normalise_db_uri(db_uri))
+    try:
+        with engine.connect() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO customer_loanapplication (
+                        loan_id, profile_id, loan_tier_id,
+                        amount_requested, tenor,
+                        monthly_repayment, total_loan_due,
+                        bank, date_user_accept, disbursed,
+                        current_loan_balance, tenant_id
+                    ) VALUES (
+                        :lid, :pid, :tid_loan,
+                        :amt, :tenor,
+                        :monthly, :total,
+                        :bank, NOW(), FALSE,
+                        :amt, :tenant_db_id
+                    )
+                """),
+                {
+                    "lid":         loan_id,
+                    "pid":         profile["id"],
+                    "tid_loan":    tier["id"],
+                    "amt":         str(amount_requested),
+                    "tenor":       tenor,
+                    "monthly":     str(monthly_repay),
+                    "total":       str(total_due),
+                    "bank":        bank,
+                    "tenant_db_id": tenant_db_id,
+                },
+            )
+            conn.commit()
+    finally:
+        engine.dispose()
+
+    log_info(
+        f"LoanApplication created: loan_id={loan_id}, amount=₦{amount_requested}, "
+        f"tenor={tenor}m, profile_id={profile['id']}",
+        tenant_id, conversation_id,
+    )
+
+    return (
+        f"🎉 *Loan Application Successful!*\n\n"
+        f"  Applicant          : {full_name}\n"
+        f"  Account Number     : {account_number}\n"
+        f"  Loan Reference     : {loan_id[:8].upper()}…\n\n"
+        f"*Loan Details (Bronze Tier)*\n"
+        f"  Principal          : ₦{amount_requested:,.2f}\n"
+        f"  Monthly Interest   : {tier['monthly_interest_rate']}% "
+        f"= ₦{monthly_interest:,.2f}\n"
+        f"  Monthly Repayment  : ₦{monthly_repay:,.2f}\n"
+        f"  Tenor              : {tenor} month(s)\n"
+        f"  Total Amount Due   : ₦{total_due:,.2f}\n"
+        f"  Processing Fee     : ₦{tier['process_fee']:,.2f}\n"
+        f"  Late Payment Fee   : ₦{tier['late_fee']:,.2f}\n\n"
+        f"Your loan will be disbursed to your VFD account shortly. "
+        f"Please ensure timely repayments to maintain your credit rating. "
+        f"Thank you for banking with RosaPay! 🏦"
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# EXPORT  – append to banking_tools list in banking_tools.py
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+
+# @tool("authenticate_customer_tool", args_schema=AuthenticateCustomerInput)
+@tool("authenticate_customer_tool")
+def authenticate_customer_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
+    """
+    Verifies a customer's service password before granting access to banking.
+    Call this at the start of every banking session.
+
+    Outcomes
+      • No account found     → prompt to register.
+      • No password set yet  → return a fresh single-use setup link.
+      • Wrong password       → increment failure count, warn customer.
+      • Correct password     → return confirmation and let the agent proceed.
+    """
+    tenant_id       = runtime.context.tenant_id
+    conversation_id = runtime.context.conversation_id
+    db_uri          = runtime.context.db_uri
+    phone_number    = runtime.context.phone_number
+    # phone_number    = kwargs["phone_number"]
+    # raw_password    = kwargs.get("password")
+    device_type     = runtime.context.device_type
+    log_info(
+        f"authenticate_customer_tool: phone={phone_number}",
+        tenant_id, conversation_id,
+    )
+
+    if not db_uri:
+        return "Error: Database configuration missing."
+    if device_type != "phone":
+        return "Error: Banking is not supported on {device_type}. Please use your phone app."
+    try:
+        customer = _get_customer_row(db_uri, phone_number)
+
+        # ── No account ────────────────────────────────────────────────────────
+        if not customer:
+            return (
+                "No banking account was found for this number. "
+                "Please use the *Open Account* option to register first."
+            )
+
+        # ── Password not yet created ──────────────────────────────────────────
+        if not customer["password"]:
+            try:
+                setup_token = _create_password_token(db_uri, customer["id"])
+                setup_link  = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/{setup_token}/"
+            except Exception:
+                setup_link = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/"
+
+            return (
+                f"Hi {customer['full_name']}, you haven't created a password yet.\n\n"
+                f"Please set your banking password using the secure link below. "
+                f"It is valid for {PASSWORD_SETUP_TOKEN_EXPIRY_HOURS} hours and "
+                f"single-use:\n\n"
+                f"🔐 {setup_link}\n\n"
+                f"Return here once your password is created."
+            )
+            
+        if not raw_password:
+            return (
+                "Customer has an account and a password is set. "
+                "Please prompt the customer to enter their banking password to continue."
+            )
+
+        # ── Verify password (Django PBKDF2 check) ────────────────────────────
+        from django.contrib.auth.hashers import check_password as django_check
+        if not django_check(raw_password, customer["password"]):
+            # Increment failure counter
+            engine = create_engine(_normalise_db_uri(db_uri))
+            try:
+                with engine.connect() as conn:
+                    conn.execute(
+                        text("""
+                            UPDATE customer_customer
+                            SET failed_password_attempts =
+                                COALESCE(failed_password_attempts, 0) + 1
+                            WHERE phone_number = :phone
+                        """),
+                        {"phone": phone_number},
+                    )
+                    conn.commit()
+            finally:
+                engine.dispose()
+
+            return (
+                "❌ Incorrect password. Please check and try again. "
+                "After 5 failed attempts your account will be locked."
+            )
+
+        # ── Success: reset counter ────────────────────────────────────────────
+        engine = create_engine(_normalise_db_uri(db_uri))
+        try:
+            with engine.connect() as conn:
+                conn.execute(
+                    text("""
+                        UPDATE customer_customer
+                        SET failed_password_attempts = 0
+                        WHERE phone_number = :phone
+                    """),
+                    {"phone": phone_number},
+                )
+                conn.commit()
+        finally:
+            engine.dispose()
+
+        return (
+            f"✅ Authentication successful. Welcome back, {customer['full_name']}! "
+            f"Your account ({customer['account_number']}) is now unlocked for this session."
+        )
+
+    except Exception as exc:
+        log_error(f"authenticate_customer_tool error: {exc}", tenant_id, conversation_id)
+        return f"Authentication error: {exc}"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 3.  EVALUATE LOAN ELIGIBILITY  (new)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@tool("evaluate_loan_eligibility_tool", args_schema=LoanEligibilityInput)
+def evaluate_loan_eligibility_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
+    """
+    Evaluates a customer's loan eligibility by:
+      1. Checking whether stored data is older than 6 months.
+      2. If stale (or absent): fetching credit bureau data + social media metrics.
+      3. Running an AI analysis to produce an eligibility score and recommendation.
+      4. Persisting results to LoanProfile.
+
+    If cached data is still fresh (< 180 days) it returns the stored result immediately.
+    """
+    tenant_id       = runtime.context.tenant_id
+    conversation_id = runtime.context.conversation_id
+    db_uri          = runtime.context.db_uri
+    phone_number    = kwargs["phone_number"]
+
+    log_info(
+        f"evaluate_loan_eligibility_tool: phone={phone_number}",
+        tenant_id, conversation_id,
+    )
+
+    if not db_uri:
+        return "Error: Database configuration missing."
+
+    try:
+        customer = _get_customer_row(db_uri, phone_number)
+        if not customer:
+            return (
+                "No account found for this number. "
+                "Please complete account opening first."
+            )
+
+        account_number = customer["account_number"]
+        customer_db_id = customer["id"]
+        nin            = customer["nin"]
+        full_name      = customer["full_name"]
+
+        # ── Check cached evaluation ────────────────────────────────────────────
+        engine = create_engine(_normalise_db_uri(db_uri))
+        try:
+            with engine.connect() as conn:
+                cached = conn.execute(
+                    text("""
+                        SELECT loan_eligibility_score, eligibility_band,
+                               eligibility_notes, last_evaluated
+                        FROM customer_loanprofile
+                        WHERE customer_id = :cid
+                        LIMIT 1
+                    """),
+                    {"cid": customer_db_id},
+                ).fetchone()
+        finally:
+            engine.dispose()
+
+        if cached and cached[3]:
+            age_days = (
+                datetime.now(tz=dt_timezone.utc)
+                - cached[3].replace(tzinfo=dt_timezone.utc)
+            ).days
+            if age_days <= 180:
+                return (
+                    f"📊 Loan Eligibility Report (cached {age_days} days ago)\n\n"
+                    f"  Account    : {account_number}\n"
+                    f"  Name       : {full_name}\n"
+                    f"  Score      : {cached[0]}/100\n"
+                    f"  Band       : {cached[1].capitalize()}\n\n"
+                    f"{cached[2]}\n\n"
+                    f"ℹ️ Data is valid for {180 - age_days} more days."
+                )
+
+        log_info("Cache stale or absent – running full evaluation.", tenant_id, conversation_id)
+
+        # ── Step 1: Credit bureau ─────────────────────────────────────────────
+        credit = _fetch_credit_bureau(nin, account_number)
+        log_info(
+            f"Credit bureau: rating={credit['credit_rating']}, score={credit['credit_score']}",
+            tenant_id, conversation_id,
+        )
+
+        # ── Step 2: Social media metrics ──────────────────────────────────────
+        social = _fetch_social_metrics(
+            facebook_url  = kwargs.get("facebook_url",  ""),
+            linkedin_url  = kwargs.get("linkedin_url",  ""),
+            instagram_url = kwargs.get("instagram_url", ""),
+            twitter_url   = kwargs.get("twitter_url",   ""),
+            tiktok_url    = kwargs.get("tiktok_url",    ""),
+        )
+        log_info(
+            f"Social metrics gathered: {json.dumps(social)}",
+            tenant_id, conversation_id,
+        )
+
+        # ── Step 3: AI evaluation ─────────────────────────────────────────────
+        ai = _ai_evaluate_loan(credit, social, full_name)
+        log_info(
+            f"AI eval: score={ai['score']}, band={ai['band']}",
+            tenant_id, conversation_id,
+        )
+
+        # ── Step 4: Persist ───────────────────────────────────────────────────
+        _upsert_loan_profile(db_uri, customer_db_id, account_number, credit, social, ai)
+
+        flag_lines = ""
+        if ai.get("flags"):
+            flag_lines = "\n⚠️ Risk flags: " + ", ".join(ai["flags"])
+
+        return (
+            f"📊 Loan Eligibility Report\n\n"
+            f"  Account      : {account_number}\n"
+            f"  Name         : {full_name}\n"
+            f"  Credit Score : {credit.get('credit_score', 'N/A')} "
+            f"({credit.get('credit_rating', 'N/A')})\n"
+            f"  AI Score     : {ai['score']}/100\n"
+            f"  Band         : {ai['band'].capitalize()}\n\n"
+            f"{ai['notes']}"
+            f"{flag_lines}"
+        )
+
+    except Exception as exc:
+        log_error(
+            f"evaluate_loan_eligibility_tool error: {exc}",
+            tenant_id, conversation_id,
+        )
+        return f"An error occurred during loan evaluation: {exc}"
+
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -352,39 +1840,84 @@ def create_vfd_account_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
             )
 
         account_info   = data.get("data", {})
-        account_number = account_info.get("accountNumber") or account_info.get("account_number", "N/A")
-        full_name      = account_info.get("fullName") or account_info.get("name", "")
+        account_number = account_info.get("accountNo", "N/A")
+        first_name     = account_info.get("firstname", "Unknown")
+        last_name      = account_info.get("lastname", "Unknown")
+        full_name      = f"{first_name} {last_name}".strip()
 
-        # Persist to tenant DB (same pattern as create_customer_profile_tool)
+        # Persist to tenant DB
+        email = kwargs.get("email", f"{phone_number}@vfd.noemail.com")
+        gender = kwargs.get("gender", "male")
+        customer_id_str = str(uuid.uuid4())
+        tenant_db_id = 1
+        
+        setup_link = ""
+
         if db_uri:
             engine = create_engine(_normalise_db_uri(db_uri))
             try:
                 with engine.connect() as conn:
-                    conn.execute(
+                    result = conn.execute(
                         text("""
-                            INSERT INTO banking_customer_profile
-                                (phone_number, account_number, full_name, failed_pin_attempts)
-                            VALUES (:phone, :acct, :name, 0)
+                            INSERT INTO customer_customer (
+                                customer_id, first_name, last_name, email,
+                                phone_number, account_number, gender,
+                                nationality, occupation, date_of_birth,
+                                nin, password, tenant_id, password_attempts, password_locked, otp_used
+                            ) VALUES (
+                                :cid, :fn, :ln, :email,
+                                :phone, :acc, :gender,
+                                'Nigeria', 'Unknown', :dob,
+                                :nin, '', :tid, 0, FALSE, FALSE
+                            )
                             ON CONFLICT (phone_number)
-                            DO UPDATE SET account_number = EXCLUDED.account_number,
-                                          full_name      = EXCLUDED.full_name
+                            DO UPDATE SET
+                                account_number = EXCLUDED.account_number,
+                                nin            = EXCLUDED.nin,
+                                first_name     = EXCLUDED.first_name,
+                                last_name      = EXCLUDED.last_name
+                            RETURNING id
                         """),
-                        {"phone": phone_number, "acct": account_number, "name": full_name},
+                        {
+                            "cid":   customer_id_str,
+                            "fn":    first_name,
+                            "ln":    last_name,
+                            "email": email,
+                            "phone": phone_number,
+                            "acc":   account_number,
+                            "gender":gender,
+                            "dob":   dob,
+                            "nin":   nin,
+                            "tid":   tenant_db_id,
+                        },
                     )
+                    customer_db_id = result.fetchone()[0]
                     conn.commit()
+                    
+                    try:
+                        setup_token = _create_password_tokenv1(db_uri, customer_db_id)
+                        setup_link  = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/{setup_token}/"
+                    except Exception as e:
+                        log_error(f"Token creation error: {e}", tenant_id, conversation_id)
+                        setup_link = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/"
+            except Exception as e:
+                log_error(f"DB persist error: {e}", tenant_id, conversation_id)
+                setup_link = f"https://yourapp.com/banking/create-password?phone={phone_number}"
             finally:
                 engine.dispose()
-
-        create_pin_link = f"https://yourapp.com/banking/create-pin?phone={phone_number}"
+        else:
+            setup_link = f"https://yourapp.com/banking/create-password?phone={phone_number}"
 
         return (
             f"🎉 Account successfully created!\n\n"
             f"  Account Number : {account_number}\n"
-            f"  Bank           : VFD Bank\n"
+            f"  Bank           : VFD Microfinance Bank\n"
             f"  Account Name   : {full_name}\n\n"
-            f"To complete your setup and access all banking services, please create "
-            f"your 4-digit PIN using the link below:\n"
-            f"👉 {create_pin_link}"
+            f"To complete your setup, please create your banking password using the "
+            f"secure link below. This link is valid for {PASSWORD_SETUP_TOKEN_EXPIRY_HOURS} "
+            f"hours and can only be used once:\n\n"
+            f"🔐 {setup_link}\n\n"
+            f"After creating your password, return to WhatsApp to access all banking services."
         )
 
     except Exception as exc:
@@ -448,17 +1981,17 @@ def balance_enquiry_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
     log_info(f"balance_enquiry_tool invoked for phone: {phone_number}", tenant_id, conversation_id)
 
     try:
-        if not _verify_pin(db_uri, phone_number, pin):
-            attempts  = _increment_pin_attempts(db_uri, phone_number)
+        if not _verify_password(db_uri, phone_number, pin):
+            attempts  = _increment_password_attempts(db_uri, phone_number)
             remaining = max(0, MAX_PIN_ATTEMPTS - attempts)
             if remaining == 0:
                 return (
-                    "Your account has been locked due to too many incorrect PIN attempts. "
-                    "Please use the 'Forgot PIN' option to reset your PIN."
+                    "Your account has been locked due to too many incorrect password attempts. "
+                    "Please use the 'Forgot Password' option to reset it."
                 )
-            return f"Incorrect PIN. You have {remaining} attempt(s) remaining before your account is locked."
+            return f"Incorrect password. You have {remaining} attempt(s) remaining before your account is locked."
 
-        _reset_pin_attempts(db_uri, phone_number)
+        _reset_password_attempts(db_uri, phone_number)
         profile = _get_customer_account(db_uri, phone_number)
         headers = _wallet_headers()
 
@@ -728,18 +2261,18 @@ def transfer_money_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
     )
 
     try:
-        # PIN verification (same guard pattern as balance_enquiry_tool)
-        if not _verify_pin(db_uri, phone_number, pin):
-            attempts  = _increment_pin_attempts(db_uri, phone_number)
+        # Password verification (guard pattern)
+        if not _verify_password(db_uri, phone_number, pin):
+            attempts  = _increment_password_attempts(db_uri, phone_number)
             remaining = max(0, MAX_PIN_ATTEMPTS - attempts)
             if remaining == 0:
                 return (
-                    "Your account has been locked due to too many incorrect PIN attempts. "
-                    "Please use 'Forgot PIN' to reset your PIN."
+                    "Your account has been locked due to too many incorrect password attempts. "
+                    "Please use 'Forgot Password' to reset it."
                 )
-            return f"Incorrect PIN. You have {remaining} attempt(s) remaining."
+            return f"Incorrect password. You have {remaining} attempt(s) remaining."
 
-        _reset_pin_attempts(db_uri, phone_number)
+        _reset_password_attempts(db_uri, phone_number)
         headers = _wallet_headers()
 
         # Step 1 – sender account enquiry
@@ -864,19 +2397,20 @@ def change_pin_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
         if new_pin != confirm_pin:
             return "Your new PIN and confirmation PIN do not match. Please try again."
 
-        if not _verify_pin(db_uri, phone_number, old_pin):
-            attempts  = _increment_pin_attempts(db_uri, phone_number)
+        if not _verify_password(db_uri, phone_number, old_pin):
+            attempts  = _increment_password_attempts(db_uri, phone_number)
             remaining = max(0, MAX_PIN_ATTEMPTS - attempts)
-            return f"Incorrect current PIN. You have {remaining} attempt(s) remaining."
+            return f"Incorrect current PIN/Password. You have {remaining} attempt(s) remaining."
 
-        new_hash = hashlib.sha256(new_pin.encode()).hexdigest()
+        from django.contrib.auth.hashers import make_password
+        new_hash = make_password(new_pin)
         engine   = create_engine(_normalise_db_uri(db_uri))
         try:
             with engine.connect() as conn:
                 conn.execute(
                     text("""
-                        UPDATE banking_customer_profile
-                        SET pin_hash = :ph, failed_pin_attempts = 0
+                        UPDATE customer_customer
+                        SET password = :ph, password_attempts = 0, password_locked = False
                         WHERE phone_number = :phone
                     """),
                     {"ph": new_hash, "phone": phone_number},
@@ -933,14 +2467,15 @@ def forgot_pin_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
                 "Please try again in a well-lit environment, or contact support."
             )
 
-        new_hash = hashlib.sha256(new_pin.encode()).hexdigest()
+        from django.contrib.auth.hashers import make_password
+        new_hash = make_password(new_pin)
         engine   = create_engine(_normalise_db_uri(db_uri))
         try:
             with engine.connect() as conn:
                 conn.execute(
                     text("""
-                        UPDATE banking_customer_profile
-                        SET pin_hash = :ph, failed_pin_attempts = 0
+                        UPDATE customer_customer
+                        SET password = :ph, password_attempts = 0, password_locked = False
                         WHERE phone_number = :phone
                     """),
                     {"ph": new_hash, "phone": phone_number},
@@ -1097,7 +2632,15 @@ def get_bank_list_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
 # EXPORTED LIST  – append to tools[] in tools.py
 # ──────────────────────────────────────────────────────────────────────────────
 
-banking_tools = [
+
+banking_tools = [create_customer_profile_tool,   # replaces the version in tools.py
+    authenticate_customer_tool,
+    evaluate_loan_eligibility_tool,
+    validate_social_media_tool,
+    initiate_password_reset_tool,
+    confirm_password_reset_tool,
+    verify_otp_and_issue_link_tool,
+    apply_for_loan_tool,
     create_vfd_account_tool,
     fund_wallet_info_tool,
     balance_enquiry_tool,

@@ -1624,10 +1624,6 @@ def generate_visualization_tool(runtime: ToolRuntime[Context], **kwargs) -> dict
     # )
 
         
-       
-   
-
-
 # --- FULLY ENHANCED VISUALIZATION TOOL ---
 
 
