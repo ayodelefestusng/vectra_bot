@@ -25,8 +25,8 @@ import base64
 import requests
 import os
 import time
-query ="Can I open account."
-# query =" Ayodele Adeyinka 16041979 ayodelefestusng@gmail.com 08021299221 Male 53053498019"
+query ="Whay is my account balance 08027790963"
+# query =" Ayodele Adeyinka 1994-04-05 ayodelefestusng1@gmail.com 08027790963 Male NIN is 89475355532 Software Engineer Nigeriam"
 # query ="Banking Nigeriam"
 # query ="16 04 1979 13012345670 08021299221"
 # query ="Ayodele Adeyinka Nigerian Banking ayodelefestusng@gmail.com male 08021299221 16 04 1979"
@@ -59,6 +59,7 @@ class CTAPayload(BaseModel):
     tenant_id: str = "DMC"
     employee_id: str = "unknown"
     customer_name: str = "Customer"
+    pending_intent: str = ""
 
 def convert_drive_link_to_direct(url: str) -> str:
     """
@@ -439,6 +440,8 @@ async def trigger_cta_webhook(payload: CTAPayload):
     # Prompt context for CTA
     if payload.event == "password_created":
         prompt = f"The customer {payload.customer_name} just successfully created their banking password. Congratulate them briefly and ask if they'd like to check their balance, transfer funds, or apply for a loan now."
+    elif payload.event == "auth_completed":
+        prompt = f"The customer {payload.customer_name} just successfully authenticated. Now automatically resume and execute what they were trying to do with this pending intent: {payload.pending_intent}"
     elif payload.event == "loan_accepted":
         prompt = f"The customer {payload.customer_name} just accepted their loan offer. Congratulate them briefly and tell them their funds have been successfully disbursed."
     else:
@@ -470,7 +473,7 @@ async def whatsapp_webhook2(request: Request):
             message_text = query
             employee_id = DEFAULT_EMPLOYEE_ID
             phone_number = "2348021299221"
-            conversation_id = "debug_conversation12"
+            conversation_id = "debug_conversation12s77ddddll7"
             tenant_id = "DMC"
             push_name = "User"
             device_type = "phone"
@@ -498,7 +501,7 @@ async def whatsapp_webhook2(request: Request):
         response = process_message(
             message_content=message_text,
             conversation_id=conversation_id,
-            phone_number=phone_number
+            phone_number=phone_number,
             tenant_id=tenant_id,
             employee_id=employee_id,
             push_name=push_name,

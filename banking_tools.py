@@ -64,7 +64,7 @@ from .base import (
     ForgotPinInput,
     SavedBillersInput,
     DeleteSavedBillerInput,
-    BankListInput,CustomerProfileInput,LoanEligibilityInput,AuthenticateCustomerInput,
+    BankListInput,CustomerProfileInput,LoanEligibilityInput,
     ValidateSocialMediaInput,ValidateSocialMediaInput,InitiatePasswordResetInput,
     ConfirmPasswordResetInput,VerifyOTPInput,ApplyForLoanInput
 )
@@ -79,7 +79,7 @@ AUTH_URL         = os.getenv("VFD_AUTH_URL",
     "https://api-devapps.vfdbank.systems/vfd-tech/baas-portal/v1.1/baasauth/token")
 CONSUMER_KEY     = os.getenv("VFD_CONSUMER_KEY",    "mL1dqaMcB760EP3fR18Vc23qUSZy")
 CONSUMER_SECRET  = os.getenv("VFD_CONSUMER_SECRET", "ohAWPpabbj0UmMppmOgAFTazkjQt")
-APP_BASE_URL     = os.getenv("APP_BASE_URL",    "https://yourapp.com")
+APP_BASE_URL     = os.getenv("APP_BASE_URL",    "http://127.0.0.1:8001/customer/")  # For auth links in responses; replace with your actual URL
 SMS_API_URL      = os.getenv("SMS_API_URL",     "https://mock-sms.yourapp.com/send")
 SMS_API_KEY      = os.getenv("SMS_API_KEY",     "mock-key")
 WALLET_PREFIX    = os.getenv("VFD_WALLET_PREFIX", "DML")
@@ -257,6 +257,67 @@ def _get_customer_account(db_uri: str, phone_number: str) -> dict:
                 "Please complete account opening first."
             )
         return {"accountNumber": row[0], "accountName": row[1]}
+    finally:
+        engine.dispose()
+
+def _generate_django_token(engine, customer_id: int) -> str:
+    import uuid
+    import datetime
+    token = str(uuid.uuid4())
+    expires = datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+    with engine.connect() as conn:
+        conn.execute(
+            text("INSERT INTO customer_passwordsetuptoken (token, customer_id, expires_at, created_at, is_used) VALUES (:tok, :cid, :exp, :now, False)"),
+            {"tok": token, "cid": customer_id, "exp": expires, "now": datetime.datetime.utcnow()}
+        )
+        conn.commit()
+    return token
+
+def _authenticate(db_uri: str, phone_number: str, intent: str) -> dict:
+    log_info("_authenticate called", "sudo_tenant_id", "sudo_conversation_id")
+    engine = create_engine(_normalise_db_uri(db_uri))
+    try:
+        with engine.connect() as conn:
+            import pandas as pd
+            df = pd.read_sql(
+                text("SELECT id, password, authenticated, password_locked, password_created FROM customer_customer WHERE phone_number = :phone"),
+                conn,
+                params={"phone": phone_number}
+            )
+            if df.empty:
+                return {"status": "error", "message": "No banking profile found for this number. Please register first."}
+            row = df.iloc[0]
+            if row.get("authenticated", False):
+                return {"status": "authenticated", "message": "OK"}
+            
+            app_url = APP_BASE_URL.rstrip('/') + "/banking"
+
+            if not row.get("password") and not row.get("password_created"):
+                token = _generate_django_token(engine, int(row["id"]))
+                return {
+                    "status": "action_required",
+                    "message": f"Welcome! Please set up your banking password to secure your account and continue: {app_url}/set-password/{token}/?intent={intent}"
+                }
+            if row.get("password_locked"):
+                return {
+                    "status": "action_required",
+                    "message": f"Your account is locked due to too many failed attempts. Please click here to reset your password: {app_url}/locked/?phone={phone_number}&intent={intent}"
+                }
+            return {
+                "status": "action_required",
+                "message": f"Authentication required. Please log in securely to authorize this transaction: {app_url}/login/?phone={phone_number}&intent={intent}"
+            }
+    except Exception as e:
+        return {"status": "error", "message": f"Authentication check failed: {e}"}
+    finally:
+        engine.dispose()
+
+def _mark_unauthenticated(db_uri: str, phone_number: str) -> None:
+    engine = create_engine(_normalise_db_uri(db_uri))
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("UPDATE customer_customer SET authenticated = False WHERE phone_number = :phone"), {"phone": phone_number})
+            conn.commit()
     finally:
         engine.dispose()
 
@@ -708,9 +769,11 @@ def create_customer_profile_tool(runtime: ToolRuntime[Context], **kwargs) -> str
         f"create_customer_profile_tool: {first_name} {last_name} / {phone}",
         tenant_id, conversation_id,
     )
+    
 
     # ── Step 1: Open VFD Account ──────────────────────────────────────────────
     try:
+        
         token   = _get_access_token()
         url     = f"{WALLET_BASE_URL}/client/tiers/individual"
         headers = {"AccessToken": token, "Content-Type": "application/json"}
@@ -721,9 +784,14 @@ def create_customer_profile_tool(runtime: ToolRuntime[Context], **kwargs) -> str
             headers=headers,
             timeout=30,
         )
+        log_info(f"Account Creation Response: {resp}", tenant_id, conversation_id)
         vfd_data = resp.json()
         log_info(
             f"VFD account opening status: {vfd_data.get('status')}",
+            tenant_id, conversation_id,
+        )
+        log_info(
+            f"b status: {resp.text}",
             tenant_id, conversation_id,
         )
 
@@ -769,25 +837,35 @@ def create_customer_profile_tool(runtime: ToolRuntime[Context], **kwargs) -> str
                 tenant_db_id = t_row[0]
 
                 # Insert / update customer row
+                
+                from datetime import datetime
+
                 result = conn.execute(
                     text("""
                         INSERT INTO customer_customer (
                             customer_id, first_name, last_name, email,
                             phone_number, account_number, gender,
                             nationality, occupation, date_of_birth,
-                            nin, password, tenant_id
+                            nin, password, tenant_id,
+                            authenticated, password_created,
+                            password_attempts, password_locked, otp_used,
+                            created_at, updated_at
                         ) VALUES (
                             :cid, :fn, :ln, :email,
                             :phone, :acc, :gender,
                             :nat, :occ, :dob,
-                            :nin, '', :tid
+                            :nin, '', :tid,
+                            FALSE, FALSE,
+                            0, FALSE, FALSE,
+                            :created_at, :updated_at
                         )
                         ON CONFLICT (phone_number)
                         DO UPDATE SET
                             account_number = EXCLUDED.account_number,
                             nin            = EXCLUDED.nin,
                             first_name     = EXCLUDED.first_name,
-                            last_name      = EXCLUDED.last_name
+                            last_name      = EXCLUDED.last_name,
+                            updated_at     = EXCLUDED.updated_at
                         RETURNING id
                     """),
                     {
@@ -803,10 +881,54 @@ def create_customer_profile_tool(runtime: ToolRuntime[Context], **kwargs) -> str
                         "dob":   dob_str,
                         "nin":   nin,
                         "tid":   tenant_db_id,
+                        "created_at": datetime.utcnow(),
+                        "updated_at": datetime.utcnow(),
                     },
                 )
+
                 customer_db_id = result.fetchone()[0]
                 conn.commit()
+
+                
+                
+                # result = conn.execute(
+                #     text("""
+                #         INSERT INTO customer_customer (
+                #             customer_id, first_name, last_name, email,
+                #             phone_number, account_number, gender,
+                #             nationality, occupation, date_of_birth,
+                #             nin, password, tenant_id
+                #         ) VALUES (
+                #             :cid, :fn, :ln, :email,
+                #             :phone, :acc, :gender,
+                #             :nat, :occ, :dob,
+                #             :nin, '', :tid
+                #         )
+                #         ON CONFLICT (phone_number)
+                #         DO UPDATE SET
+                #             account_number = EXCLUDED.account_number,
+                #             nin            = EXCLUDED.nin,
+                #             first_name     = EXCLUDED.first_name,
+                #             last_name      = EXCLUDED.last_name
+                #         RETURNING id
+                #     """),
+                #     {
+                #         "cid":   customer_id_str,
+                #         "fn":    first_name,
+                #         "ln":    last_name,
+                #         "email": email,
+                #         "phone": phone,
+                #         "acc":   account_number,
+                #         "gender":gender,
+                #         "nat":   nationality,
+                #         "occ":   occupation,
+                #         "dob":   dob_str,
+                #         "nin":   nin,
+                #         "tid":   tenant_db_id,
+                #     },
+                # )
+                # customer_db_id = result.fetchone()[0]
+                # conn.commit()
         finally:
             engine.dispose()
 
@@ -818,6 +940,7 @@ def create_customer_profile_tool(runtime: ToolRuntime[Context], **kwargs) -> str
     try:
         setup_token = _create_password_token(db_uri, customer_db_id)
         setup_link  = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/{setup_token}/"
+        log_info(f"Password setup token created: {setup_token}-the setup link is: {setup_link}", tenant_id, conversation_id)
     except Exception as exc:
         log_error(f"Token creation error: {exc}", tenant_id, conversation_id)
         setup_link = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/"  # fallback (no token)
@@ -1572,6 +1695,7 @@ def authenticate_customer_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
     conversation_id = runtime.context.conversation_id
     db_uri          = runtime.context.db_uri
     phone_number    = runtime.context.phone_number
+    # phone_number    = "08027777333"  # Temporary hardcoded for testing; replace with dynamic value in production
     # phone_number    = kwargs["phone_number"]
     # raw_password    = kwargs.get("password")
     device_type     = runtime.context.device_type
@@ -1800,132 +1924,6 @@ def evaluate_loan_eligibility_tool(runtime: ToolRuntime[Context], **kwargs) -> s
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 1. ACCOUNT OPENING
-# ──────────────────────────────────────────────────────────────────────────────
-
-@tool("create_vfd_account_tool", args_schema=VFDAccountOpeningInput)
-def create_vfd_account_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
-    """
-    Opens a new VFD bank account using the customer's NIN and date of birth.
-    On success, returns the account number, bank name, and a PIN setup link.
-    """
-    tenant_id       = runtime.context.tenant_id
-    conversation_id = runtime.context.conversation_id
-    db_uri          = runtime.context.db_uri
-
-    nin          = kwargs.get("nin")
-    dob          = kwargs.get("date_of_birth")
-    phone_number = kwargs.get("phone_number")
-
-    log_info(f"create_vfd_account_tool invoked for phone: {phone_number}", tenant_id, conversation_id)
-
-    try:
-        token   = _get_access_token()
-        url     = f"{WALLET_BASE_URL}/client/tiers/individual"
-        headers = {"AccessToken": token, "Content-Type": "application/json"}
-        resp    = requests.post(
-            url,
-            params={"nin": nin, "dateOfBirth": dob},
-            json={},
-            headers=headers,
-            timeout=30,
-        )
-        data = resp.json()
-        log_info(f"VFD account opening response status: {data.get('status')}", tenant_id, conversation_id)
-
-        if data.get("status") != "00":
-            return (
-                f"Account opening was unsuccessful: {data.get('message', 'Unknown error')}. "
-                "Please verify your NIN and date of birth and try again."
-            )
-
-        account_info   = data.get("data", {})
-        account_number = account_info.get("accountNo", "N/A")
-        first_name     = account_info.get("firstname", "Unknown")
-        last_name      = account_info.get("lastname", "Unknown")
-        full_name      = f"{first_name} {last_name}".strip()
-
-        # Persist to tenant DB
-        email = kwargs.get("email", f"{phone_number}@vfd.noemail.com")
-        gender = kwargs.get("gender", "male")
-        customer_id_str = str(uuid.uuid4())
-        tenant_db_id = 1
-        
-        setup_link = ""
-
-        if db_uri:
-            engine = create_engine(_normalise_db_uri(db_uri))
-            try:
-                with engine.connect() as conn:
-                    result = conn.execute(
-                        text("""
-                            INSERT INTO customer_customer (
-                                customer_id, first_name, last_name, email,
-                                phone_number, account_number, gender,
-                                nationality, occupation, date_of_birth,
-                                nin, password, tenant_id, password_attempts, password_locked, otp_used
-                            ) VALUES (
-                                :cid, :fn, :ln, :email,
-                                :phone, :acc, :gender,
-                                'Nigeria', 'Unknown', :dob,
-                                :nin, '', :tid, 0, FALSE, FALSE
-                            )
-                            ON CONFLICT (phone_number)
-                            DO UPDATE SET
-                                account_number = EXCLUDED.account_number,
-                                nin            = EXCLUDED.nin,
-                                first_name     = EXCLUDED.first_name,
-                                last_name      = EXCLUDED.last_name
-                            RETURNING id
-                        """),
-                        {
-                            "cid":   customer_id_str,
-                            "fn":    first_name,
-                            "ln":    last_name,
-                            "email": email,
-                            "phone": phone_number,
-                            "acc":   account_number,
-                            "gender":gender,
-                            "dob":   dob,
-                            "nin":   nin,
-                            "tid":   tenant_db_id,
-                        },
-                    )
-                    customer_db_id = result.fetchone()[0]
-                    conn.commit()
-                    
-                    try:
-                        setup_token = _create_password_tokenv1(db_uri, customer_db_id)
-                        setup_link  = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/{setup_token}/"
-                    except Exception as e:
-                        log_error(f"Token creation error: {e}", tenant_id, conversation_id)
-                        setup_link = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/"
-            except Exception as e:
-                log_error(f"DB persist error: {e}", tenant_id, conversation_id)
-                setup_link = f"https://yourapp.com/banking/create-password?phone={phone_number}"
-            finally:
-                engine.dispose()
-        else:
-            setup_link = f"https://yourapp.com/banking/create-password?phone={phone_number}"
-
-        return (
-            f"🎉 Account successfully created!\n\n"
-            f"  Account Number : {account_number}\n"
-            f"  Bank           : VFD Microfinance Bank\n"
-            f"  Account Name   : {full_name}\n\n"
-            f"To complete your setup, please create your banking password using the "
-            f"secure link below. This link is valid for {PASSWORD_SETUP_TOKEN_EXPIRY_HOURS} "
-            f"hours and can only be used once:\n\n"
-            f"🔐 {setup_link}\n\n"
-            f"After creating your password, return to WhatsApp to access all banking services."
-        )
-
-    except Exception as exc:
-        log_error(f"create_vfd_account_tool error: {exc}", tenant_id, conversation_id)
-        return f"An error occurred during account opening: {exc}"
-
-
-# ──────────────────────────────────────────────────────────────────────────────
 # 2. FUND WALLET
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -1981,17 +1979,13 @@ def balance_enquiry_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
     log_info(f"balance_enquiry_tool invoked for phone: {phone_number}", tenant_id, conversation_id)
 
     try:
-        if not _verify_password(db_uri, phone_number, pin):
-            attempts  = _increment_password_attempts(db_uri, phone_number)
-            remaining = max(0, MAX_PIN_ATTEMPTS - attempts)
-            if remaining == 0:
-                return (
-                    "Your account has been locked due to too many incorrect password attempts. "
-                    "Please use the 'Forgot Password' option to reset it."
-                )
-            return f"Incorrect password. You have {remaining} attempt(s) remaining before your account is locked."
+        if runtime.context.device_type != "phone":
+             return "Please note: for your security, banking transactions can only be performed from your mobile device."
 
-        _reset_password_attempts(db_uri, phone_number)
+        auth = _authenticate(db_uri, phone_number, "resume_balance_enquiry")
+        if auth["status"] != "authenticated":
+            return auth["message"]
+
         profile = _get_customer_account(db_uri, phone_number)
         headers = _wallet_headers()
 
@@ -2018,6 +2012,8 @@ def balance_enquiry_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
     except Exception as exc:
         log_error(f"balance_enquiry_tool error: {exc}", tenant_id, conversation_id)
         return f"An error occurred during balance enquiry: {exc}"
+    finally:
+        _mark_unauthenticated(db_uri, phone_number)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2261,18 +2257,13 @@ def transfer_money_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
     )
 
     try:
-        # Password verification (guard pattern)
-        if not _verify_password(db_uri, phone_number, pin):
-            attempts  = _increment_password_attempts(db_uri, phone_number)
-            remaining = max(0, MAX_PIN_ATTEMPTS - attempts)
-            if remaining == 0:
-                return (
-                    "Your account has been locked due to too many incorrect password attempts. "
-                    "Please use 'Forgot Password' to reset it."
-                )
-            return f"Incorrect password. You have {remaining} attempt(s) remaining."
+        if runtime.context.device_type != "phone":
+             return "Please note: for your security, banking transactions can only be performed from your mobile device."
 
-        _reset_password_attempts(db_uri, phone_number)
+        auth = _authenticate(db_uri, phone_number, "resume_transfer")
+        if auth["status"] != "authenticated":
+            return auth["message"]
+
         headers = _wallet_headers()
 
         # Step 1 – sender account enquiry
@@ -2368,6 +2359,8 @@ def transfer_money_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
     except Exception as exc:
         log_error(f"transfer_money_tool error: {exc}", tenant_id, conversation_id)
         return f"An error occurred during the transfer: {exc}"
+    finally:
+        _mark_unauthenticated(db_uri, phone_number)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2631,6 +2624,143 @@ def get_bank_list_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 # EXPORTED LIST  – append to tools[] in tools.py
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 1. ACCOUNT OPENING
+# ──────────────────────────────────────────────────────────────────────────────
+
+@tool("create_vfd_account_tool", args_schema=VFDAccountOpeningInput)
+def create_vfd_account_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
+    """
+    Opens a new VFD bank account using the customer's NIN and date of birth.
+    On success, returns the account number, bank name, and a PIN setup link.
+    """
+    tenant_id       = runtime.context.tenant_id
+    conversation_id = runtime.context.conversation_id
+    db_uri          = runtime.context.db_uri
+
+    nin          = kwargs.get("nin")
+    dob          = kwargs.get("date_of_birth")
+    phone_number = kwargs.get("phone_number")
+
+    log_info(f"create_vfd_account_tool invoked for phone: {phone_number}-{dob}", tenant_id, conversation_id)
+    
+    try:
+        token   = _get_access_token()
+        url     = f"{WALLET_BASE_URL}/client/tiers/individual"
+        headers = {"AccessToken": token, "Content-Type": "application/json"}
+        resp    = requests.post(
+            url,
+            params={"nin": nin, "dateOfBirth": dob},
+            json={},
+            headers=headers,
+            timeout=30,
+        )
+        data = resp.json()
+        
+        
+        # BASE_URL = "https://api-devapps.vfdbank.systems/vtech-wallet/api/v2/wallet2"
+        # url = BASE_URL + f"/client/tiers/individual?nin={nin}&dateOfBirth={dob}"
+        # headers = {"AccessToken": token, "Content-Type": "application/json"}
+        # response = requests.post(url, headers=headers, json={})
+        # data = response.json()
+        
+
+        log_info(f"VFD account opening response status: {data.get('status')}", tenant_id, conversation_id)
+        log_info(f"VFD account opening response Raw Response: {data}", tenant_id, conversation_id)
+
+        if data.get("status") != "00":
+            return (
+                f"Account opening was unsuccessful: {data.get('message', 'Unknown error')}. "
+                "Please verify your NIN and date of birth and try again."
+            )
+
+        account_info   = data.get("data", {})
+        account_number = account_info.get("accountNo", "N/A")
+        first_name     = account_info.get("firstname", "Unknown")
+        last_name      = account_info.get("lastname", "Unknown")
+        full_name      = f"{first_name} {last_name}".strip()
+
+        # Persist to tenant DB
+        email = kwargs.get("email", f"{phone_number}@vfd.noemail.com")
+        gender = kwargs.get("gender", "male")
+        customer_id_str = str(uuid.uuid4())
+        tenant_db_id = 1
+        
+        setup_link = ""
+
+        if db_uri:
+            engine = create_engine(_normalise_db_uri(db_uri))
+            try:
+                with engine.connect() as conn:
+                    result = conn.execute(
+                        text("""
+                            INSERT INTO customer_customer (
+                                customer_id, first_name, last_name, email,
+                                phone_number, account_number, gender,
+                                nationality, occupation, date_of_birth,
+                                nin, password, tenant_id, password_attempts, password_locked, otp_used
+                            ) VALUES (
+                                :cid, :fn, :ln, :email,
+                                :phone, :acc, :gender,
+                                'Nigeria', 'Unknown', :dob,
+                                :nin, '', :tid, 0, FALSE, FALSE
+                            )
+                            ON CONFLICT (phone_number)
+                            DO UPDATE SET
+                                account_number = EXCLUDED.account_number,
+                                nin            = EXCLUDED.nin,
+                                first_name     = EXCLUDED.first_name,
+                                last_name      = EXCLUDED.last_name
+                            RETURNING id
+                        """),
+                        {
+                            "cid":   customer_id_str,
+                            "fn":    first_name,
+                            "ln":    last_name,
+                            "email": email,
+                            "phone": phone_number,
+                            "acc":   account_number,
+                            "gender":gender,
+                            "dob":   dob,
+                            "nin":   nin,
+                            "tid":   tenant_db_id,
+                        },
+                    )
+                    customer_db_id = result.fetchone()[0]
+                    conn.commit()
+                    
+                    try:
+                        setup_token = _create_password_tokenv1(db_uri, customer_db_id)
+                        setup_link  = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/{setup_token}/"
+                    except Exception as e:
+                        log_error(f"Token creation error: {e}", tenant_id, conversation_id)
+                        setup_link = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/"
+            except Exception as e:
+                log_error(f"DB persist error: {e}", tenant_id, conversation_id)
+                # setup_link = f"https://yourapp.com/banking/create-password?phone={phone_number}"
+                setup_link = f"http://127.0.0.1:8000/customer/banking/create-password?phone={phone_number}"
+            finally:
+                engine.dispose()
+        else:
+            setup_link = f"https://yourapp.com/banking/create-password?phone={phone_number}"
+
+        return (
+            f"🎉 Account successfully created!\n\n"
+            f"  Account Number : {account_number}\n"
+            f"  Bank           : VFD Microfinance Bank\n"
+            f"  Account Name   : {full_name}\n\n"
+            f"To complete your setup, please create your banking password using the "
+            f"secure link below. This link is valid for {PASSWORD_SETUP_TOKEN_EXPIRY_HOURS} "
+            f"hours and can only be used once:\n\n"
+            f"🔐 {setup_link}\n\n"
+            f"After creating your password, return to WhatsApp to access all banking services."
+        )
+
+    except Exception as exc:
+        log_error(f"create_vfd_account_tool error: {exc}", tenant_id, conversation_id)
+        return f"An error occurred during account opening: {exc}"
 
 
 banking_tools = [create_customer_profile_tool,   # replaces the version in tools.py

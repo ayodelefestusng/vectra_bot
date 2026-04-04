@@ -969,6 +969,8 @@ tool_guide = {
     },
 }
 
+
+
 current_year = datetime.now().year
 previous_year = current_year - 1
 current_date_str = datetime.now().strftime("%Y-%m-%d")
@@ -1803,15 +1805,15 @@ def process_message(message_content: str, conversation_id: str, tenant_id: str, 
         
         config = {"configurable": {"thread_id": conversation_id}}
         systematic_prompt = f"{system_prompt}\n\n{greeting_instruction}{golden_rules}"
-
+        phone_number1="08027790963"
         context = Context(
             tenant_id=tenant_id,
             conversation_id=conversation_id,
             emp_id=employee_id,
             db_uri=db_uri,
             push_name=push_name,
-            phone_number=phone_number,
             device_type=device_type,
+            phone_number=phone_number1,
             agent_prompt=p_res[0] if p_res else GLOBAL_FINAL_ANSWER_PROMPT,
             final_answer_prompt=p_res[1] if p_res else GLOBAL_FINAL_ANSWER_PROMPT,
             tool_intent_map=p_res[2] if p_res else tool_guide,

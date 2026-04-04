@@ -385,7 +385,8 @@ class Context(BaseModel):
     # tenant_config: Optional[Dict[str, Any]] = Field(description="Configuration settings specific to the tenant, injected at runtime.")
     vector_store_path: Optional[str] = Field(description="The file path to the tenant's vector store, injected at runtime.")
     # summarization_request: bool = Field(description="Indicates if this is a summarization request, injected at runtime.")
-   
+    phone_number: Optional[str] = Field(description="The phone number of the user, injected at runtime.")
+    # intent: Optional[str] = Field(description="The intent of the user, injected at runtime.")
 class ResponseFormat(BaseModel):
     """Response schema for the agent."""
     # A punny response (always required)
@@ -417,7 +418,6 @@ class FundWalletInput(BaseModel):
 class BalanceEnquiryInput(BaseModel):
     """Input schema for wallet balance enquiry. PIN is required."""
     phone_number: str = Field(..., description="Customer's registered phone number.")
-    pin: str = Field(..., description="Customer's 4-digit numeric PIN for authentication.")
     current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
 
 
@@ -472,7 +472,6 @@ class TransferMoneyInput(BaseModel):
     beneficiary_account_number: str = Field(..., description="Recipient's bank account number.")
     beneficiary_bank: str = Field(..., description="Recipient's bank name (e.g. Access Bank, Zenith Bank).")
     amount: str = Field(..., description="Transfer amount in Naira.")
-    pin: str = Field(..., description="Sender's 4-digit numeric PIN for transaction authorisation.")
     narration: Optional[str] = Field(None, description="Optional transfer remark / description.")
     current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
 
@@ -566,6 +565,6 @@ class State(MessagesState):
 
     phone_number: str
     event: str
-    tenant_id: str = "DMC"
-    employee_id: str = "unknown"
-    customer_name: str = "Customer"
+    tenant_id: str
+    employee_id: str
+    customer_name: str
