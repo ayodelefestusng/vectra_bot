@@ -621,7 +621,8 @@ SOCIAL_PLATFORM_PATTERNS: dict[str, re.Pattern] = {
 
 def _run_apify_actor(actor_id: str, run_input: dict, timeout_secs: int = 20) -> dict:
     import time
-    token = os.getenv("APIFY_API_TOKEN", "apify_api_hMasnfyZ5B6usNZcQ2pNs5tDb2jZbP21QF2E")
+    token = os.getenv("APIFY_API_TOKEN")
+    # token = os.getenv("APIFY_API_TOKEN", "apify_api_hMasnfyZ5B6usNZcQ2pNs5tDb2jZbP21QF2E")
     url = f"https://api.apify.com/v2/acts/{actor_id}/runs?token={token}"
     try:
         resp = requests.post(url, json=run_input, timeout=10)
