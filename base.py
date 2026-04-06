@@ -482,21 +482,13 @@ class TransferMoneyInput(BaseModel):
     current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
 
 
-class ChangePinInput(BaseModel):
-    """Input schema for changing the customer's 4-digit banking PIN."""
-    # phone_number: str = Field(..., description="Customer's registered phone number.")
-    old_pin: str = Field(..., description="Current 4-digit PIN.")
-    new_pin: str = Field(..., description="New 4-digit PIN the customer wishes to set.")
-    confirm_new_pin: str = Field(..., description="Must match new_pin exactly.")
+class ChangePasswordInput(BaseModel):
+    """Input schema for changing the customer's password. No arguments required."""
     current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
 
 
-class ForgotPinInput(BaseModel):
-    """Input schema for resetting the PIN via NIN + liveness verification."""
-    # phone_number: str = Field(..., description="Customer's registered phone number.")
-    nin: str = Field(..., description="Customer's National Identification Number (NIN).")
-    new_pin: str = Field(..., description="New 4-digit PIN to set after identity verification.")
-    confirm_new_pin: str = Field(..., description="Must match new_pin exactly.")
+class ForgotPasswordInput(BaseModel):
+    """Input schema for resetting the password. No arguments required."""
     current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
 
 
@@ -517,6 +509,41 @@ class DeleteSavedBillerInput(BaseModel):
 class BankListInput(BaseModel):
     """Input schema for fetching the list of Nigerian banks, optionally filtered by name."""
     search: Optional[str] = Field(None, description="Optional partial bank name to filter results (e.g. 'access').")
+    current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
+
+
+class GetDataBundlesInput(BaseModel):
+    """Input schema for fetching available data bundles for a network."""
+    network: str = Field(..., description="Telecom network name, e.g. MTN, Airtel, Glo, 9mobile.")
+    current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
+
+
+class BuyDataInput(BaseModel):
+    """Input schema for purchasing a data bundle."""
+    network: str = Field(..., description="Telecom network name, e.g. MTN, Airtel, Glo, 9mobile.")
+    amount: str = Field(..., description="Data bundle amount in Naira.")
+    data_code: str = Field(..., description="The specific code for the data bundle being purchased.")
+    recipient_type: str = Field(
+        "self",
+        description="Who is receiving the data: 'self' for own number, 'third_party' for someone else.",
+    )
+    beneficiary_phone: Optional[str] = Field(
+        None,
+        description="Beneficiary phone number. Required only when recipient_type is 'third_party'.",
+    )
+    current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
+
+
+class TransactionStatusInput(BaseModel):
+    """Input schema for querying the status of a transaction."""
+    reference: Optional[str] = Field(None, description="The unique transaction reference.")
+    session_id: Optional[str] = Field(None, description="The NIP session ID (for inter-bank transfers).")
+    current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
+
+
+class ReversalStatusInput(BaseModel):
+    """Input schema for querying the reversal status of a transaction."""
+    reference: str = Field(..., description="The unique transaction reference.")
     current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
 
 

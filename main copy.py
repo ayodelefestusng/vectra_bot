@@ -66,15 +66,6 @@ class CTAPayload(BaseModel):
     amount: Optional[float] = None
     reference: Optional[str] = None
 
-class WebhookPayload(BaseModel):
-    message: str
-    phone_number: str | None = "2348027790963"
-    pushName: str | None = "User"
-    tenant_id: str | None = "DMC"
-    employee_id: str | None = "EMP12345"
-    conversation_id: str | None = "conv_67890"
-    device_type: str | None = "phone"
-
 
 class VFDInwardCredit(BaseModel):
     reference: str
@@ -486,12 +477,12 @@ async def trigger_cta_webhook(payload: CTAPayload):
     try:
         response = process_message(
             message_content=prompt,
-            conversation_id=payload.phone_number,
-            # conversation_id="conv_6sddwwwdddeeee",
+            # conversation_id=payload.phone_number,
+            conversation_id="conv_6sddwwwdddeeee",
             phone_number=payload.phone_number,
             tenant_id=payload.tenant_id,
-            employee_id=payload.employee_id,
-            # employee_id="EMP12345",
+            # employee_id=payload.employee_id,
+            employee_id="EMP12345",
             push_name=payload.customer_name,
             device_type="phone"
             # device_type: "phone"
@@ -540,6 +531,15 @@ async def vfd_inward_credit_webhook(payload: VFDInwardCredit):
         log_error(f"VFD Webhook error: {e}", "system", "system")
         return {"status": "error", "message": str(e)}
 
+
+class WebhookPayload(BaseModel):
+    message: str
+    phone_number: str | None = "2348027790963"
+    pushName: str | None = "User"
+    tenant_id: str | None = "DMC"
+    employee_id: str | None = "EMP12345"
+    conversation_id: str | None = "conv_67890"
+    device_type: str | None = "phone"
 
 @app.post("/webhook2")
 async def whatsapp_webhook2(payload: WebhookPayload):

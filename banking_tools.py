@@ -61,13 +61,14 @@ from .base import (
     PayBillInput,
     BeneficiaryLookupInput,
     TransferMoneyInput,
-    ChangePinInput,
-    ForgotPinInput,
+    ChangePasswordInput,
+    ForgotPasswordInput,
     SavedBillersInput,
     DeleteSavedBillerInput,
     BankListInput,CustomerProfileInput,LoanEligibilityInput,
-    ValidateSocialMediaInput,ValidateSocialMediaInput,InitiatePasswordResetInput,
-    ConfirmPasswordResetInput,VerifyOTPInput,ApplyForLoanInput
+    ValidateSocialMediaInput, InitiatePasswordResetInput,
+    ConfirmPasswordResetInput, VerifyOTPInput, ApplyForLoanInput,
+    GetDataBundlesInput, BuyDataInput, TransactionStatusInput, ReversalStatusInput
 )
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -85,10 +86,6 @@ SMS_API_URL      = os.getenv("SMS_API_URL",     "https://mock-sms.yourapp.com/se
 SMS_API_KEY      = os.getenv("SMS_API_KEY",     "mock-key")
 WALLET_PREFIX    = os.getenv("VFD_WALLET_PREFIX", "DML")
 
-OTP_CHARGE_AMOUNT      = Decimal("10.00")   # ₦10 debit before OTP is sent
-OTP_EXPIRY_SECONDS     = 10                 # tight 10-second window
-PASSWORD_SETUP_PATH    = "/banking/set-password"
-TOKEN_EXPIRY_HOURS     = 24
 
 BILLS_BASE_URL = os.getenv(
     "VFD_BILLS_BASE_URL",
@@ -96,6 +93,19 @@ BILLS_BASE_URL = os.getenv(
 )
 
 LIVENESS_API_URL = os.getenv("LIVENESS_API_URL", "https://yourapp.com/api/liveness")
+
+
+# Credit bureau – replace with your actual provider
+CREDIT_BUREAU_URL = os.getenv("CREDIT_BUREAU_URL", "https://creditbureau.example.ng/api/v1")
+CREDIT_BUREAU_KEY = os.getenv("CREDIT_BUREAU_API_KEY", "")
+
+
+PASSWORD_SETUP_TOKEN_EXPIRY_HOURS = 24
+PASSWORD_SETUP_PATH = "/banking/set-password"
+OTP_CHARGE_AMOUNT      = Decimal("10.00")   # ₦10 debit before OTP is sent
+OTP_EXPIRY_SECONDS     = 10                 # tight 10-second window
+PASSWORD_SETUP_PATH    = "/banking/set-password"
+TOKEN_EXPIRY_HOURS     = 24
 
 # Human-readable reference labels per biller category shown to customer
 CATEGORY_REFERENCE_LABEL: dict = {
@@ -109,13 +119,6 @@ CATEGORY_REFERENCE_LABEL: dict = {
 # Categories that require mandatory VFD customer-validate call before payment
 MANDATORY_VALIDATE_CATEGORIES = {"utility", "cable tv", "betting", "gaming"}
 MAX_PIN_ATTEMPTS = 5
-# Credit bureau – replace with your actual provider
-CREDIT_BUREAU_URL = os.getenv("CREDIT_BUREAU_URL", "https://creditbureau.example.ng/api/v1")
-CREDIT_BUREAU_KEY = os.getenv("CREDIT_BUREAU_API_KEY", "")
-PASSWORD_SETUP_TOKEN_EXPIRY_HOURS = 24
-PASSWORD_SETUP_PATH = "/banking/set-password"
-
-
 # ──────────────────────────────────────────────────────────────────────────────
 # PRIVATE HELPERS
 # ──────────────────────────────────────────────────────────────────────────────
@@ -143,6 +146,22 @@ headers = {"AccessToken": token, "Content-Type": "application/json"}
 
 def _wallet_headers() -> dict:
     return {"AccessToken": _get_access_token(), "Content-Type": "application/json"}
+
+
+def _send_sms(phone_number: str, message: str) -> bool:
+    """Mock SMS sender that logs to a file as per user request."""
+    log_info(f"Sending SMS to {phone_number}: {message}", "sudo_tenant_id", "sudo_conversation_id")
+    log_file = "/tmp/otp_log.txt"
+    try:
+        with open(log_file, "a") as f:
+            f.write(f"[{datetime.now().isoformat()}] TO: {phone_number} | MSG: {message}\n")
+        return True
+    except Exception as e:
+        log_error(f"Failed to log SMS: {e}", "sudo_tenant_id", "sudo_conversation_id")
+        return False
+
+
+SUPPORT_PHONE = "08021299221"
 
 
 def _unique_ref() -> str:
@@ -227,6 +246,7 @@ def _resolve_biller(db_uri: str, tenant_code: str, biller_name: str) -> dict:
     # Otherwise, we might still need to fetch if 'payment_items' is empty.
     payment_items = matched.get("payment_items", [])
     if not payment_items:
+        headers     = _wallet_headers()
         items_resp    = requests.get(
             f"{BILLS_BASE_URL}/billerItems",
             headers=headers,
@@ -315,8 +335,8 @@ def _generate_django_token(engine, customer_id: int) -> str:
     return token
 
 
-def _authenticate(db_uri: str, phone_number: str, intent: str) -> dict:
-    log_info("_authenticate called", "sudo_tenant_id", "sudo_conversation_id")
+def _authenticate(db_uri: str, phone_number: str, intent: str, tenant_id: str = "DMC") -> dict:
+    log_info(f"_authenticate called for phone: {phone_number}", tenant_id, "sys")
     engine = create_engine(_normalise_db_uri(db_uri))
     try:
         with engine.connect() as conn:
@@ -334,27 +354,37 @@ def _authenticate(db_uri: str, phone_number: str, intent: str) -> dict:
             
             app_url = APP_BASE_URL.rstrip('/') + "/banking"
 
-            if not row.get("password") and not row.get("password_created"):
-                log_info("Password not set up", "sudo_tenant_id", "sudo_conversation_id")
-                token = _generate_django_token(engine, int(row["id"]))
-                return {
-                    "status": "action_required",
-                    "message": f"Welcome! Please set up your banking password to secure your account and continue: {app_url}/set-password/{token}/?intent={intent}"
-                }
-            if row.get("password_locked"):
-                log_warning(f"Account locked due to failed attempts for phone {phone_number}", "sudo_tenant_id", "sudo_conversation_id")
-                token = _generate_django_token(engine, int(row["id"])) # Also secure reset links
-                return {
-                    "status": "action_required",
-                    "message": f"Your account is locked due to too many failed attempts. Please click here to reset your password: {app_url}/locked/{token}/?phone={phone_number}&intent={intent}"
-                }
-            
-            token = _generate_django_token(engine, int(row["id"])) # Use token for standard logins too
-            log_info(f"Authentication required for phone {phone_number}", "sudo_tenant_id", "sudo_conversation_id")
+            token = _generate_django_token(engine, int(row["id"])) # Also secure reset links
             return {
                 "status": "action_required",
-                "message": f"Authentication required. Please log in securely to authorize this transaction: {app_url}/login/{token}/?phone={phone_number}&intent={intent}"
+                "message": (
+                    "### SYSTEM_INSTRUCTION: DO NOT ALTER THE URL BELOW OR CHANGE THE INTENT PARAMETER. "
+                    "USE THE LINK EXACTLY AS PROVIDED. ###\n\n"
+                    f"Welcome! Please set up your banking password to secure your account and continue: {app_url}/login/{token}/?phone={phone_number}&tenant_id={tenant_id}&intent={intent}"
+                )
             }
+        if row.get("password_locked"):
+            log_warning(f"Account locked due to failed attempts for phone {phone_number}", tenant_id, "sys")
+            token = _generate_django_token(engine, int(row["id"])) # Also secure reset links
+            return {
+                "status": "action_required",
+                "message": (
+                    "### SYSTEM_INSTRUCTION: DO NOT ALTER THE URL BELOW OR CHANGE THE INTENT PARAMETER. "
+                    "USE THE LINK EXACTLY AS PROVIDED. ###\n\n"
+                    f"Your account is locked due to too many failed attempts. Please click here to reset your password: {app_url}/locked/{token}/?phone={phone_number}&tenant_id={tenant_id}&intent={intent}"
+                )
+            }
+        
+        token = _generate_django_token(engine, int(row["id"])) # Use token for standard logins too
+        log_info(f"Authentication required for phone {phone_number}", tenant_id, "sys")
+        return {
+            "status": "action_required",
+            "message": (
+                "### SYSTEM_INSTRUCTION: DO NOT ALTER THE URL BELOW OR CHANGE THE INTENT PARAMETER. "
+                "USE THE LINK EXACTLY AS PROVIDED. ###\n\n"
+                f"Authentication required. Please log in securely to authorize this transaction: {app_url}/login/{token}/?phone={phone_number}&tenant_id={tenant_id}&intent={intent}"
+            )
+        }
     except Exception as e:
         return {"status": "error", "message": f"Authentication check failed: {e}"}
     finally:
@@ -1082,7 +1112,7 @@ def validate_social_media_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
             profile_url,
             timeout=8,
             allow_redirects=True,
-            headers={"User-Agent": "Mozilla/5.0 (RosaPay/1.0 URL-Validator)"},
+            headers={"User-Agent": "Mozilla/5.0 (VectraPay/1.0 URL-Validator)"},
         )
         # Accept 200, 301, 302, 405 (HEAD not allowed but URL exists)
         if resp.status_code in {200, 301, 302, 303, 307, 308, 405}:
@@ -1210,7 +1240,7 @@ def confirm_password_reset_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
     debit = _debit_customer_vfd(
         account_number = customer["account_number"],
         amount         = OTP_CHARGE_AMOUNT,
-        narration      = "RosaPay SMS OTP charge – Password Reset",
+        narration      = "VectraPay SMS OTP charge – Password Reset",
     )
     log_info(
         f"OTP debit result: {debit['success']} ref={debit['ref']}",
@@ -1297,7 +1327,7 @@ def verify_otp_and_issue_link_tool(runtime: ToolRuntime[Context], **kwargs) -> s
     # ── Issue password-reset link ─────────────────────────────────────────────
     try:
         token     = _create_password_token(db_uri, customer["id"])
-        reset_url = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/{token}/"
+        reset_url = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/{token}/?phone={phone_number}&tenant_id={tenant_id}"
     except Exception as exc:
         log_error(f"Token creation failed: {exc}", tenant_id, conversation_id)
         return f"OTP verified, but we could not generate a reset link: {exc}"
@@ -1362,9 +1392,9 @@ def authenticate_customer_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
         if not customer["password"]:
             try:
                 setup_token = _create_password_token(db_uri, customer["id"])
-                setup_link  = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/{setup_token}/"
+                setup_link  = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/{setup_token}/?phone={phone_number}&tenant_id={tenant_id}"
             except Exception:
-                setup_link = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/"
+                setup_link = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/?phone={phone_number}&tenant_id={tenant_id}"
 
             return (
                 f"Hi {customer['full_name']}, you haven't created a password yet.\n\n"
@@ -1629,7 +1659,7 @@ def apply_for_loan_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
         f"  Late Payment Fee   : ₦{tier['late_fee']:,.2f}\n\n"
         f"Your loan will be disbursed to your VFD account shortly. "
         f"Please ensure timely repayments to maintain your credit rating. "
-        f"Thank you for banking with RosaPay! 🏦"
+        f"Thank you for banking with VectraPay! 🏦"
     )
 
 
@@ -1964,11 +1994,11 @@ def create_customer_profile_tool(runtime: ToolRuntime[Context], **kwargs) -> str
     # ── Step 3: Generate single-use password-setup link ───────────────────────
     try:
         setup_token = _create_password_token(db_uri, customer_db_id)
-        setup_link  = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/{setup_token}/"
+        setup_link  = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/{setup_token}/?phone={phone}&tenant_id={tenant_id}"
         log_info(f"Password setup token created: {setup_token}-the setup link is: {setup_link}", tenant_id, conversation_id)
     except Exception as exc:
         log_error(f"Token creation error: {exc}", tenant_id, conversation_id)
-        setup_link = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/"  # fallback (no token)
+        setup_link = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/?phone={phone}&tenant_id={tenant_id}"  # fallback (no token)
 
     return (
         f"🎉 Account successfully created!\n\n"
@@ -2005,7 +2035,7 @@ def balance_enquiry_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
         if runtime.context.device_type != "phone":
              return "Please note: for your security, banking transactions can only be performed from your mobile device."
 
-        auth = _authenticate(db_uri, phone_number, "resume_balance_enquiry")
+        auth = _authenticate(db_uri, phone_number, "resume_balance_enquiry", tenant_id)
         if auth["status"] != "authenticated":
             return auth["message"]
 
@@ -2070,7 +2100,7 @@ def buy_airtime_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
              return "Please note: for your security, banking transactions can only be performed from your mobile device."
 
         db_uri = runtime.context.db_uri
-        auth = _authenticate(db_uri, phone_number, "resume_airtime")
+        auth = _authenticate(db_uri, phone_number, "resume_airtime", tenant_id)
         if auth["status"] != "authenticated":
             return auth["message"]
 
@@ -2099,6 +2129,7 @@ def buy_airtime_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
 
 
 
+        headers     = _wallet_headers()
         resp = requests.post(f"{BILLS_BASE_URL}/pay",headers=headers, json=payload, timeout=30)
         data = resp.json()
         log_info(f"Airtime payment response status: {data.get('status')}", tenant_id, conversation_id)
@@ -2189,7 +2220,7 @@ def pay_bill_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
         if runtime.context.device_type != "phone":
              return "Please note: for your security, banking transactions can only be performed from your mobile device."
 
-        auth = _authenticate(db_uri, phone_number, "resume_bill_payment")
+        auth = _authenticate(db_uri, phone_number, "resume_bill_payment", tenant_id)
         if auth["status"] != "authenticated":
             return auth["message"]
 
@@ -2206,6 +2237,7 @@ def pay_bill_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
             "phoneNumber": phone_number,
         }
 
+        headers     = _wallet_headers()
         resp = requests.post(f"{BILLS_BASE_URL}/pay",headers=headers, json=payload, timeout=30)
         data = resp.json()
         log_info(f"Bill payment response: {data}", tenant_id, conversation_id)
@@ -2271,15 +2303,14 @@ def fund_wallet_info_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
         return (
             f"To fund your wallet, make a transfer to:\n\n"
             f"  Account Number : {profile['accountNumber']}\n"
-            f"  Bank           : VFD Bank\n"
+            f"  Bank           : VFD Microfinance Bank\n"
             f"  Account Name   : {profile['accountName']}\n\n"
             f"Available funding channels:\n"
             f"  • Mobile Banking App (any Nigerian bank)\n"
             f"  • USSD transfer\n"
             f"  • Internet banking / Bank transfer\n"
             f"  • POS or ATM deposit\n\n"
-            f"Funds are usually credited within minutes. "
-            f"Contact support if your balance is not updated after 10 minutes."
+            f"💡 *Tip*: Transfers from VFD accounts are instant and free."
         )
 
     except Exception as exc:
@@ -2318,7 +2349,7 @@ def transfer_money_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
         if runtime.context.device_type != "phone":
              return "Please note: for your security, banking transactions can only be performed from your mobile device."
 
-        auth = _authenticate(db_uri, phone_number, "resume_transfer")
+        auth = _authenticate(db_uri, phone_number, "resume_transfer", tenant_id)
         if auth["status"] != "authenticated":
             return auth["message"]
 
@@ -2348,9 +2379,16 @@ def transfer_money_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
             return f"Bank '{benef_bank}' could not be found. Please check the name and try again."
 
         # Step 3 – beneficiary enquiry
+        VFD_CODE = "999999"
+        transfer_type = "intra" if bank_code == VFD_CODE else "inter"
+        recipient_params = {
+            "accountNo": benef_account,
+            "bank": bank_code,
+            "transfer_type": transfer_type
+        }
         benef_resp = requests.get(
             f"{WALLET_BASE_URL}/transfer/recipient",
-            params={"accountNo": benef_account, "bank": bank_code, "transfer_type": "inter"},
+            params=recipient_params,
             headers=headers,
             timeout=20,
         )
@@ -2374,13 +2412,19 @@ def transfer_money_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
         payload   = {
             "fromAccount":   from_account,
             "toAccount":     to_account,
-            "amount":        amount,
+            "amount":        str(amount),
             "narration":     narration,
             "reference":     reference,
             "bank":          bank_code,
             "signature":     signature,
-            "transfer_type": "inter",
+            "transferType":  transfer_type,
         }
+        
+        # Intra-bank specific fields
+        if transfer_type == "intra":
+            payload["toSavingsId"] = benef_info.get("account", {}).get("id", "")
+        else:
+            payload["toSession"] = benef_info.get("account", {}).get("id", "")
 
         txn_resp = requests.post(f"{WALLET_BASE_URL}/transfer", json=payload, headers=headers, timeout=30)
         txn_data = txn_resp.json()
@@ -2411,14 +2455,258 @@ def transfer_money_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
             f"  Amount      : ₦{amount}\n"
             f"  Narration   : {narration}\n"
             f"  Reference   : {txn_ref}\n"
-            f"  Status      : {tsq_status}"
+            f"  Status      : {tsq_status}\n\n"
+            f"For support, contact {SUPPORT_PHONE}."
         )
 
     except Exception as exc:
         log_error(f"transfer_money_tool error: {exc}", tenant_id, conversation_id)
         return f"An error occurred during the transfer: {exc}"
+@tool("get_data_bundles_tool", args_schema=GetDataBundlesInput)
+def get_data_bundles_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
+    """
+    Fetches available data bundles for a specific network (MTN, Airtel, Glo, 9mobile).
+    """
+    tenant_id       = runtime.context.tenant_id
+    conversation_id = runtime.context.conversation_id
+    network         = kwargs.get("network")
+
+    log_info(f"get_data_bundles_tool for {network}", tenant_id, conversation_id)
+
+    try:
+        db_uri = runtime.context.db_uri
+        biller_info = _resolve_biller(str(db_uri), str(tenant_id), str(network))
+        
+        headers = _wallet_headers()
+        resp = requests.get(
+            f"{BILLS_BASE_URL}/billerItems",
+            headers=headers,
+            params={
+                "billerId": biller_info["billerId"],
+                "divisionId": biller_info["divisionId"],
+                "productId": biller_info["productId"]
+            },
+            timeout=20,
+        )
+        data = resp.json()
+        items = data.get("data", {}).get("paymentitems", [])
+        
+        if not items:
+            return f"No data bundles found for {network}."
+
+        bundle_list = [f"• {item['paymentitemname']} - ₦{item['amount']} (Code: {item['paymentCode']})" for item in items]
+        return f"📶 *Available Data Bundles for {network.upper()}*\n\n" + "\n".join(bundle_list)
+
+    except Exception as exc:
+        log_error(f"get_data_bundles_tool error: {exc}", tenant_id, conversation_id)
+        return f"Error fetching bundles: {exc}"
+
+
+@tool("buy_data_tool", args_schema=BuyDataInput)
+def buy_data_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
+    """
+    Purchases a data bundle for the customer or a third party.
+    """
+    tenant_id       = runtime.context.tenant_id
+    conversation_id = runtime.context.conversation_id
+    phone_number    = runtime.context.phone_number
+    network         = kwargs.get("network")
+    amount          = kwargs.get("amount")
+    data_code       = kwargs.get("data_code")
+    recipient_type  = kwargs.get("recipient_type", "self")
+    benef_phone     = kwargs.get("beneficiary_phone") or phone_number
+
+    log_info(f"buy_data_tool: {network}, {amount}, to {benef_phone}", tenant_id, conversation_id)
+
+    try:
+        if runtime.context.device_type != "phone":
+             return "Please note: for your security, banking transactions can only be performed from your mobile device."
+
+        db_uri = runtime.context.db_uri
+        auth = _authenticate(db_uri, phone_number, "resume_buy_data", tenant_id)
+        if auth["status"] != "authenticated":
+            return auth["message"]
+
+        biller_info = _resolve_biller(str(db_uri), str(tenant_id), str(network))
+        reference   = _unique_ref()
+        headers     = _wallet_headers()
+
+        payload = {
+            "customerId":  benef_phone,
+            "amount":      str(amount),
+            "division":    biller_info["divisionId"],
+            "paymentItem": data_code,
+            "productId":   biller_info["productId"],
+            "billerId":    biller_info["billerId"],
+            "reference":   reference,
+            "phoneNumber": phone_number,
+        }
+
+        resp = requests.post(f"{BILLS_BASE_URL}/pay", headers=headers, json=payload, timeout=30)
+        data = resp.json()
+
+        if data.get("status") != "00":
+            return f"Data purchase failed: {data.get('message')}. Support: {SUPPORT_PHONE}"
+
+        return (
+            f"✅ Data Purchase Successful!\n\n"
+            f"  Network    : {network.upper()}\n"
+            f"  Amount     : ₦{amount}\n"
+            f"  Beneficiary: {benef_phone}\n"
+            f"  Reference  : {reference}\n\n"
+            f"For support, contact {SUPPORT_PHONE}."
+        )
+
+    except Exception as exc:
+        log_error(f"buy_data_tool error: {exc}", tenant_id, conversation_id)
+        return f"Error purchasing data: {exc}"
     finally:
         _mark_unauthenticated(db_uri, phone_number)
+
+
+@tool("transaction_status_tool", args_schema=TransactionStatusInput)
+def transaction_status_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
+    """
+    Checks the status of a specific transaction using its reference or session ID.
+    """
+    tenant_id       = runtime.context.tenant_id
+    conversation_id = runtime.context.conversation_id
+    reference       = kwargs.get("reference")
+    session_id      = kwargs.get("session_id")
+
+    log_info(f"TSQ for ref={reference}, sid={session_id}", tenant_id, conversation_id)
+
+    try:
+        headers = _wallet_headers()
+        params = {}
+        if reference: params["reference"] = reference
+        if session_id: params["sessionId"] = session_id
+
+        resp = requests.get(f"{WALLET_BASE_URL}/transactions", headers=headers, params=params, timeout=20)
+        data = resp.json()
+        
+        if data.get("status") != "00":
+            return f"Transaction lookup failed: {data.get('message')}. Support: {SUPPORT_PHONE}"
+
+        txn = data.get("data", {})
+        status = txn.get("transactionStatus", "Unknown")
+        status_map = {"00": "✅ SUCCESSFUL", "99": "❌ FAILED", "01": "⏳ PENDING", "02": "⏳ PENDING"}
+        
+        return (
+            f"🔍 *Transaction Status Query*\n\n"
+            f"  Reference : {txn.get('reference')}\n"
+            f"  Amount    : ₦{txn.get('amount')}\n"
+            f"  Date      : {txn.get('transactionDate')}\n"
+            f"  Result    : {status_map.get(status, status)}\n\n"
+            f"For support, contact {SUPPORT_PHONE}."
+        )
+
+    except Exception as exc:
+        log_error(f"TSQ error: {exc}", tenant_id, conversation_id)
+        return f"Error querying transaction status: {exc}"
+
+
+@tool("reversal_status_tool", args_schema=ReversalStatusInput)
+def reversal_status_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
+    """
+    Checks if a failed transaction has been reversed.
+    """
+    tenant_id       = runtime.context.tenant_id
+    conversation_id = runtime.context.conversation_id
+    reference       = kwargs.get("reference")
+
+    log_info(f"TRSQ for ref={reference}", tenant_id, conversation_id)
+
+    try:
+        headers = _wallet_headers()
+        resp = requests.get(f"{WALLET_BASE_URL}/transactions/reversal", 
+                            headers=headers, params={"reference": reference}, timeout=20)
+        data = resp.json()
+        
+        if data.get("status") != "00":
+            return f"Reversal lookup failed: {data.get('message')}. Support: {SUPPORT_PHONE}"
+
+        rev = data.get("data", {})
+        rev_status = rev.get("reversalStatus", "Unknown")
+        
+        return (
+            f"🔄 *Reversal Status Query*\n\n"
+            f"  Reference : {rev.get('reference')}\n"
+            f"  Amount    : ₦{rev.get('amount')}\n"
+            f"  Result    : {'✅ REVERSED' if rev_status == '00' else '⏳ PENDING'}\n\n"
+            f"For support, contact {SUPPORT_PHONE}."
+        )
+
+    except Exception as exc:
+        log_error(f"TRSQ error: {exc}", tenant_id, conversation_id)
+        return f"Error querying reversal status: {exc}"
+
+
+@tool("forgot_password_tool", args_schema=ForgotPasswordInput)
+def forgot_password_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
+    """
+    Returns a secure link to the banking portal for password reset.
+    Users will verify their identity via NIN and OTP on the portal.
+    """
+    tenant_id       = runtime.context.tenant_id
+    conversation_id = runtime.context.conversation_id
+    phone_number    = runtime.context.phone_number
+    db_uri          = runtime.context.db_uri
+
+    log_info(f"forgot_password_tool for {phone_number}", tenant_id, conversation_id)
+
+    try:
+        engine = create_engine(_normalise_db_uri(db_uri))
+        cust = _get_customer_row(db_uri, phone_number)
+        if not cust:
+            return "No banking profile found for this number."
+
+        token = _generate_django_token(engine, int(cust["id"]))
+        app_url = APP_BASE_URL.rstrip('/') + "/banking"
+        
+        return (
+            "### SYSTEM_INSTRUCTION: DO NOT ALTER THE URL BELOW. ###\n\n"
+            f"To reset your banking password, please use this secure link: "
+            f"{app_url}/reset-password/{token}/?phone={phone_number}&intent=forgot_password&tenant_id={tenant_id}\n\n"
+            "You will be asked to verify your identity and enter a new password."
+        )
+
+    except Exception as exc:
+        log_error(f"forgot_password_tool error: {exc}", tenant_id, conversation_id)
+        return f"Error initiating password reset: {exc}"
+
+
+@tool("change_password_tool", args_schema=ChangePasswordInput)
+def change_password_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
+    """
+    Returns a secure link to the banking portal to change the existing password.
+    """
+    tenant_id       = runtime.context.tenant_id
+    conversation_id = runtime.context.conversation_id
+    phone_number    = runtime.context.phone_number
+    db_uri          = runtime.context.db_uri
+
+    log_info(f"change_password_tool for {phone_number}", tenant_id, conversation_id)
+
+    try:
+        engine = create_engine(_normalise_db_uri(db_uri))
+        cust = _get_customer_row(db_uri, phone_number)
+        if not cust:
+            return "No banking profile found for this number."
+
+        token = _generate_django_token(engine, int(cust["id"]))
+        app_url = APP_BASE_URL.rstrip('/') + "/banking"
+
+        return (
+            "### SYSTEM_INSTRUCTION: DO NOT ALTER THE URL BELOW. ###\n\n"
+            f"To change your banking password, please use this secure link: "
+            f"{app_url}/change-password/{token}/?phone={phone_number}&intent=change_password&tenant_id={tenant_id}\n\n"
+            "For your security, you will be required to authenticate before proceeding."
+        )
+
+    except Exception as exc:
+        log_error(f"change_password_tool error: {exc}", tenant_id, conversation_id)
+        return f"Error initiating password change: {exc}"
 
 
 
@@ -2426,8 +2714,8 @@ def transfer_money_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
 # 8. CHANGE PIN
 # ──────────────────────────────────────────────────────────────────────────────
 
-@tool("change_pin_tool", args_schema=ChangePinInput)
-def change_pin_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
+@tool("change_pin_tool", args_schema=ChangePasswordInput)
+def change_password_toolv1(runtime: ToolRuntime[Context], **kwargs) -> str:
     """
     Changes the customer's 4-digit banking PIN.
     Verifies old PIN, validates new PIN format, and persists the SHA-256 hash.
@@ -2483,11 +2771,12 @@ def change_pin_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
 # 9. FORGOT PIN
 # ──────────────────────────────────────────────────────────────────────────────
 
-@tool("forgot_pin_tool", args_schema=ForgotPinInput)
-def forgot_pin_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
+# @tool("forgot_password_tool", args_schema=ForgotPasswordInput)
+@tool("forgot_password_tool")
+def forgot_password_toolv1(runtime: ToolRuntime[Context], **kwargs) -> str:
     """
-    Resets the customer's PIN after NIN + liveness verification.
-    The liveness API is called internally. On success the new PIN hash is stored.
+    Resets the customer's password after NIN + liveness verification.
+    The liveness API is called internally. On success the new password hash is stored.
     """
     tenant_id       = runtime.context.tenant_id
     conversation_id = runtime.context.conversation_id
@@ -2507,6 +2796,7 @@ def forgot_pin_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
         if new_pin != confirm_pin:
             return "The PINs do not match. Please re-enter and confirm your new PIN."
 
+        headers       = _wallet_headers()
         liveness_resp = requests.post(
             LIVENESS_API_URL,
             json={"phoneNumber": phone_number, "nin": nin},headers=headers,
@@ -2758,158 +3048,24 @@ def get_bank_list_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
 # 1. ACCOUNT OPENING
 # ──────────────────────────────────────────────────────────────────────────────
 
-@tool("create_vfd_account_tool", args_schema=VFDAccountOpeningInput)
-def create_vfd_account_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
-    """
-    Opens a new VFD bank account using the customer's NIN and date of birth.
-    On success, returns the account number, bank name, and a PIN setup link.
-    """
-    tenant_id       = runtime.context.tenant_id
-    conversation_id = runtime.context.conversation_id
-    db_uri          = runtime.context.db_uri
-
-    nin          = kwargs.get("nin")
-    dob          = kwargs.get("date_of_birth")
-    phone_number    = runtime.context.phone_number
-    # phone_number = kwargs.get("phone_number")
-
-    log_info(f"create_vfd_account_tool invoked for phone: {phone_number}-{dob}", tenant_id, conversation_id)
-    
-    try:
-        token   = _get_access_token()
-        url     = f"{WALLET_BASE_URL}/client/tiers/individual"
-        headers = {"AccessToken": token, "Content-Type": "application/json"}
-        resp    = requests.post(
-            url,
-            params={"nin": nin, "dateOfBirth": dob},
-            json={},
-            headers=headers,
-            timeout=30,
-        )
-        data = resp.json()
-        
-        
-        # BASE_URL = "https://api-devapps.vfdbank.systems/vtech-wallet/api/v2/wallet2"
-        # url = BASE_URL + f"/client/tiers/individual?nin={nin}&dateOfBirth={dob}"
-        # headers = {"AccessToken": token, "Content-Type": "application/json"}
-        # response = requests.post(url, headers=headers, json={})
-        # data = response.json()
-        
-
-        log_info(f"VFD account opening response status: {data.get('status')}", tenant_id, conversation_id)
-        log_info(f"VFD account opening response Raw Response: {data}", tenant_id, conversation_id)
-
-        if data.get("status") != "00":
-            return (
-                f"Account opening was unsuccessful: {data.get('message', 'Unknown error')}. "
-                "Please verify your NIN and date of birth and try again."
-            )
-
-        account_info   = data.get("data", {})
-        account_number = account_info.get("accountNo", "N/A")
-        first_name     = account_info.get("firstname", "Unknown")
-        last_name      = account_info.get("lastname", "Unknown")
-        full_name      = f"{first_name} {last_name}".strip()
-
-        # Persist to tenant DB
-        email = kwargs.get("email", f"{phone_number}@vfd.noemail.com")
-        gender = kwargs.get("gender", "male")
-        customer_id_str = str(uuid.uuid4())
-        tenant_db_id = 1
-        
-        setup_link = ""
-
-        if db_uri:
-            engine = create_engine(_normalise_db_uri(db_uri))
-            try:
-                with engine.connect() as conn:
-                    result = conn.execute(
-                        text("""
-                            INSERT INTO customer_customer (
-                                customer_id, first_name, last_name, email,
-                                phone_number, account_number, gender,
-                                nationality, occupation, date_of_birth,
-                                nin, password, tenant_id, password_attempts, password_locked, otp_used
-                            ) VALUES (
-                                :cid, :fn, :ln, :email,
-                                :phone, :acc, :gender,
-                                'Nigeria', 'Unknown', :dob,
-                                :nin, '', :tid, 0, FALSE, FALSE
-                            )
-                            ON CONFLICT (phone_number)
-                            DO UPDATE SET
-                                account_number = EXCLUDED.account_number,
-                                nin            = EXCLUDED.nin,
-                                first_name     = EXCLUDED.first_name,
-                                last_name      = EXCLUDED.last_name
-                            RETURNING id
-                        """),
-                        {
-                            "cid":   customer_id_str,
-                            "fn":    first_name,
-                            "ln":    last_name,
-                            "email": email,
-                            "phone": phone_number,
-                            "acc":   account_number,
-                            "gender":gender,
-                            "dob":   dob,
-                            "nin":   nin,
-                            "tid":   tenant_db_id,
-                        },
-                    )
-                    customer_db_id = result.fetchone()[0]
-                    conn.commit()
-                    
-                    try:
-                        setup_token = _create_password_tokenv1(db_uri, customer_db_id)
-                        setup_link  = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/{setup_token}/"
-                    except Exception as e:
-                        log_error(f"Token creation error: {e}", tenant_id, conversation_id)
-                        setup_link = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/"
-            except Exception as e:
-                log_error(f"DB persist error: {e}", tenant_id, conversation_id)
-                # setup_link = f"https://yourapp.com/banking/create-password?phone={phone_number}"
-                setup_link = f"http://127.0.0.1:8000/customer/banking/create-password?phone={phone_number}"
-            finally:
-                engine.dispose()
-        else:
-            setup_link = f"https://yourapp.com/banking/create-password?phone={phone_number}"
-
-        return (
-            f"🎉 Account successfully created!\n\n"
-            f"  Account Number : {account_number}\n"
-            f"  Bank           : VFD Microfinance Bank\n"
-            f"  Account Name   : {full_name}\n\n"
-            f"To complete your setup, please create your banking password using the "
-            f"secure link below. This link is valid for {PASSWORD_SETUP_TOKEN_EXPIRY_HOURS} "
-            f"hours and can only be used once:\n\n"
-            f"🔐 {setup_link}\n\n"
-            f"After creating your password, return to WhatsApp to access all banking services."
-        )
-
-    except Exception as exc:
-        log_error(f"create_vfd_account_tool error: {exc}", tenant_id, conversation_id)
-        return f"An error occurred during account opening: {exc}"
-
-
-banking_tools = [create_customer_profile_tool,   # replaces the version in tools.py
-    # authenticate_customer_tool,
+banking_tools = [
+    create_customer_profile_tool,
     evaluate_loan_eligibility_tool,
     validate_social_media_tool,
-    initiate_password_reset_tool,
-    confirm_password_reset_tool,
-    verify_otp_and_issue_link_tool,
     apply_for_loan_tool,
-    create_vfd_account_tool,
     fund_wallet_info_tool,
     balance_enquiry_tool,
     buy_airtime_tool,
     pay_bill_tool,
     get_beneficiary_name_tool,
     transfer_money_tool,
-    change_pin_tool,
-    forgot_pin_tool,
+    change_password_tool,
+    forgot_password_tool,
     get_saved_billers_tool,
     delete_saved_biller_tool,
     get_bank_list_tool,
+    get_data_bundles_tool,
+    buy_data_tool,
+    transaction_status_tool,
+    reversal_status_tool,
 ]
