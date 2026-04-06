@@ -5,7 +5,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from dotenv import load_dotenv
 
 load_dotenv()
-
+# ddd
 # Base URL from environment
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/hris?sslmode=disable")
 
