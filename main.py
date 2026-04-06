@@ -25,11 +25,14 @@ import base64
 import requests
 import os
 import time
-query ="Whay is my account balance 08027790963"
+# query ="Whay is my account balance 08027790963"
+query ="I want to buy airtime "
 # query =" Ayodele Adeyinka 1994-04-05 ayodelefestusng1@gmail.com 08027790963 Male NIN is 89475355532 Software Engineer Nigeriam"
 # query ="Banking Nigeriam"
 # query ="16 04 1979 13012345670 08021299221"
 # query ="Ayodele Adeyinka Nigerian Banking ayodelefestusng@gmail.com male 08021299221 16 04 1979"
+conversation_ids = "debug_conversarrrrrteddddddddd12s77dd22errrre2ell7"
+
 def log_debug(msg, tenant_id, conversation_id):
     # Stub for log_debug if not imported
     from .logger_utils import logger
@@ -430,11 +433,23 @@ async def whatsapp_webhook(request: Request):
         log_error(f"Error in webhook: {e}", "unknown", "unknown")
         raise HTTPException(status_code=500, detail=str(e))
 
-
-
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+# Custom handler for validation errors
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    # Log the validation error
+    log_error(f"Validation failed: {exc.errors()}", "DMC", "system")
+    # Return a JSON response with details
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()}
+    )
 
 @app.post("/webhook/trigger_cta")
 async def trigger_cta_webhook(payload: CTAPayload):
+    log_info("Triggering CTA", "sudo_tenant_id", "sudo_conversation_id")
     log_info(f"Triggering CTA for {payload.phone_number} on event {payload.event}", payload.tenant_id, "system")
     
     # Prompt context for CTA
@@ -450,12 +465,16 @@ async def trigger_cta_webhook(payload: CTAPayload):
     try:
         response = process_message(
             message_content=prompt,
-            conversation_id=payload.phone_number,
+            # conversation_id=payload.phone_number,
+            conversation_id="conv_6sddwwwdddeeee",
             phone_number=payload.phone_number,
             tenant_id=payload.tenant_id,
-            employee_id=payload.employee_id,
+            # employee_id=payload.employee_id,
+            employee_id="EMP12345",
             push_name=payload.customer_name,
-            device_type="system"
+            device_type="phone"
+            # device_type: "phone"
+            # device_type: "system"
         )
         text_content = response.get("text", str(response)) if isinstance(response, dict) else str(response)
         message_res = send_whatsapp_message(payload.phone_number, text_content)
@@ -463,31 +482,86 @@ async def trigger_cta_webhook(payload: CTAPayload):
     except Exception as e:
         log_error(f"Error in trigger_cta: {e}", payload.tenant_id, "system")
         raise HTTPException(status_code=500, detail=str(e))
+# {
+#   "message": "I need chart of monthly transaction count from inception till date",
+#   "phone_number": "2348021299221",
+#   "pushName": "User",
+#   "tenant_id": "DMC",
+#   "employee_id": "EMP12345",
+#   "conversation_id": "conv_67890",
+#   "device_type": "phone"
+# }
 
+
+class WebhookPayload(BaseModel):
+    message: str
+    phone_number: str | None = "2348027790963"
+    pushName: str | None = "User"
+    tenant_id: str | None = "DMC"
+    employee_id: str | None = "EMP12345"
+    conversation_id: str | None = "conv_67890"
+    device_type: str | None = "phone"
 
 @app.post("/webhook2")
-async def whatsapp_webhook2(request: Request):
+async def whatsapp_webhook2(payload: WebhookPayload):
+    # Now you can access JSON fields directly
+    message_text = payload.message
+    phone_number = payload.phone_number or "anonymous"
+    push_name = payload.pushName or "User"
+    tenant_id = payload.tenant_id or "DMC"
+    employee_id = payload.employee_id or DEFAULT_EMPLOYEE_ID
+    conversation_id = payload.conversation_id or phone_number
+    device_type = payload.device_type or "phone"
+
+    # ... rest of your logic ...
+    response = process_message(
+        message_content=message_text,
+        conversation_id=conversation_id,
+        phone_number=phone_number,
+        tenant_id=tenant_id,
+        employee_id=employee_id,
+        push_name=push_name,
+        device_type=device_type
+    )
+    return response
+
+
+@app.post("/webhook3")
+async def whatsapp_webhook3(request: Request):
     log_info("Received webhook2 request", "unknown", "unknown")
     try:
         if DEBUG_MODE:
             message_text = query
             employee_id = DEFAULT_EMPLOYEE_ID
             phone_number = "2348021299221"
-            conversation_id = "debug_conversation12s77ddddll7"
+            conversation_id = conversation_ids
             tenant_id = "DMC"
             push_name = "User"
             device_type = "phone"
 
         else:
+            # Try JSON first
+            try:
+                json_data = await request.json()
+                message_text = json_data.get("message", "")
+                phone_number = json_data.get("phone_number") or json_data.get("sender") or "anonymous"
+                push_name = json_data.get("pushName") or "User"
+                tenant_id = json_data.get("tenant_id", "DMC")
+                employee_id = json_data.get("employee_id", DEFAULT_EMPLOYEE_ID)
+                conversation_id = json_data.get("conversation_id") or phone_number
+                device_type = json_data.get("device_type", "phone")
+            except Exception:
+                # Fallback to form data
             # Form data handling
-            form_data = await request.form()
-            message_text = form_data.get("message", "")
-            phone_number = form_data.get("phone_number") or form_data.get("sender") or "anonymous"
-            push_name = form_data.get("pushName") or "User"
-            tenant_id = form_data.get("tenant_id", "DMC")
-            employee_id = form_data.get("employee_id", DEFAULT_EMPLOYEE_ID)
-            conversation_id = form_data.get("phone_number") or form_data.get("sender") or "anonymous"
-
+                form_data = await request.form()
+                message_text = form_data.get("message", "")
+                phone_number = form_data.get("phone_number") or form_data.get("sender") or "anonymous"
+                push_name = form_data.get("pushName") or "User"
+                tenant_id = form_data.get("tenant_id", "DMC")
+                employee_id = form_data.get("employee_id", DEFAULT_EMPLOYEE_ID)
+                conversation_id = form_data.get("phone_number") or form_data.get("sender") or "anonymous"
+                device_type = form_data.get("device_type", "phone")
+                
         if not message_text:
             return {"status": "ignored", "reason": "empty message"}
         # message_text='I need chart of monhtly transaction count from inception till date check customer_transaction schema e'

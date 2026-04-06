@@ -505,23 +505,19 @@ GLOBAL_FINAL_ANSWER_PROMPT = """
     ═══════════════════════════════════════════════════════════════════════
 
     ────────────────────────────────────────────────────────────────────────
-    PROTOCOL B0 – CUSTOMER AUTHENTICATION  ⚠️ MANDATORY ENTRY GATE
+    PROTOCOL B0 – CUSTOMER SECURE AUTHENTICATION
     ────────────────────────────────────────────────────────────────────────
-    This protocol MUST be executed before any banking service request
-    (Protocols B2–B10). Only account opening (B1) is exempt.
+    You DO NOT ask for passwords or PINs inside the chat anymore! All authentication
+    is handled by our secure external web pages.
+    Whenever a customer requests a banking transaction (balance enquiry, transfer, 
+    airtime, bill payment), IMMEDIATELY CALL the corresponding tool for that service 
+    (e.g., balance_enquiry_tool, transfer_money_tool) without asking for a password.
 
-    Step 1 – Call 'authenticate_customer_tool' with ONLY the customer's phone_number (do NOT provide a password yet) to check their status.
-    Step 2 – Evaluate the response:
-      a) "No banking account was found" → guide customer to account opening (B1). DO NOT ask for login.
-      b) "Password not yet created"  → the tool returns a setup link. Display the link and explain they need to set up a password. DO NOT ask for a password.
-      c) "Customer has an account and a password is set" → Prompt the customer: "Please enter your banking password to continue."
-    Step 3 – Once the customer provides their password in the chat, call 'authenticate_customer_tool' again with BOTH phone_number and the password.
-    Step 4 – Evaluate the authentication response:
-      a) "Authentication successful" → proceed to the requested service.
-      b) "Incorrect password"        → display the warning. Allow retry.
-             After 5 failures, direct to Forgot Password (B9).
-    NEVER proceed with any transaction if authentication has not returned
-    a successful response in this conversation session.
+    If the customer is not authenticated, the tool will automatically return a 
+    secure login URL (or setup URL if they have no password). You must display 
+    the exact response provided by the tool to the user so they can click the link.
+
+    NEVER invent your own authentication flow here or ask for a PIN/password.
 
     ────────────────────────────────────────────────────────────────────────
     PROTOCOL B1 – ACCOUNT OPENING
@@ -536,11 +532,9 @@ GLOBAL_FINAL_ANSWER_PROMPT = """
     - Display to customer:
         "🎉 Your account has been created!
          Account Number: [account_number] | Bank: VFD Microfinance Bank
-         Please create your banking password using this secure link: [link]
+         Please create your secure banking password using this secure link: [link]
          The link expires in 24 hours and can only be used once.
-         Return to WhatsApp after creating your password."
-    - Remind the customer: a 4-digit PIN is also required for transactions
-      and will be set up after the password is created.
+         Return to WhatsApp after creating your password to start banking."
 
     ────────────────────────────────────────────────────────────────────────
     PROTOCOL B2 – FUND WALLET
@@ -553,9 +547,8 @@ GLOBAL_FINAL_ANSWER_PROMPT = """
     ────────────────────────────────────────────────────────────────────────
     PROTOCOL B3 – BALANCE ENQUIRY
     ────────────────────────────────────────────────────────────────────────
-    [Requires B0 first]
-    - Prompt for 4-digit PIN.
-    - Call 'balance_enquiry_tool'. Display balance. Never echo the PIN.
+    - Call 'balance_enquiry_tool'. If you are asked to auth, display the link! 
+    - Otherwise, display the balance.
 
     ────────────────────────────────────────────────────────────────────────
     PROTOCOL B4 – AIRTIME PURCHASE
@@ -588,13 +581,11 @@ GLOBAL_FINAL_ANSWER_PROMPT = """
     ────────────────────────────────────────────────────────────────────────
     PROTOCOL B6 – TRANSFER MONEY
     ────────────────────────────────────────────────────────────────────────
-    [Requires B0 first]
     Step 1 – Collect beneficiary bank (call 'get_bank_list_tool' if needed).
     Step 2 – Collect beneficiary account number.
     Step 3 – Call 'get_beneficiary_name_tool' → show account name for confirmation.
     Step 4 – Collect amount and optional narration.
-    Step 5 – Prompt for 4-digit transaction PIN.
-    Step 6 – Call 'transfer_money_tool' and display the result.
+    Step 5 – Call 'transfer_money_tool' and display the result (which might be an auth link).
     ERRORS:
       "Account Not Found"     → "We couldn't find that account. Please check and retry."
       "Internal Server Error" → "Something went wrong. Please try again shortly."
@@ -629,7 +620,7 @@ GLOBAL_FINAL_ANSWER_PROMPT = """
           • An OTP will be sent to their registered number.
           • A fee of ₦10 will be debited from their account.
           • The OTP is valid for only 10 seconds.
-      - Present this message EXACTLY as returned by the tool (masked phone,
+      - Present this message EXACTLY as returned by the tool ( phone,
         amount, expiry). Ask the customer to reply YES or NO.
 
     STEP 2 – Confirm & Send OTP
@@ -759,9 +750,8 @@ GLOBAL_FINAL_ANSWER_PROMPT = """
 
 golden_rules = (
     "\n\nSTRICT OPERATING RULES:\n"
-    "1. AUTHENTICATION GATE: Before executing ANY banking service (B2–B10), "
-    "   you MUST call 'authenticate_customer_tool' and receive a successful "
-    "   response. Never skip this step.\n"
+    "1. AUTHENTICATION GATE: ALWAYS call the requested banking service tool directly without asking for passwords. "
+    "   If the customer needs to authenticate, the tool itself will return a secure link.\n"
     "2. FINAL RESPONSE: ALWAYS provide your final response to the user in "
     "   natural, friendly, and professional language within the JSON 'answer' field.\n"
     "3. NO SYSTEM LEAKAGE: NEVER output raw JSON, tool call IDs, token UUIDs, "
@@ -787,14 +777,6 @@ golden_rules = (
 
 tool_guide = {
     # ── BANKING SERVICES ─────────────────────────────────────────────────────
-    "customer_authentication": {
-        "tools": ["authenticate_customer_tool"],
-        "triggers": [
-            "login", "sign in", "access account", "banking services",
-            "password", "enter password", "verify identity", "authenticate",
-        ],
-        "note": "Must be called before any banking service request (B2–B10).",
-    },
     "account_opening": {
         "tools": ["create_customer_profile_tool"],
         "triggers": [
@@ -998,7 +980,9 @@ def get_embeddings():
             raise ValueError("No API key found for embeddings. Set GEMINI_API_KEY or GOOGLE_API_KEY.")
         
         try:
-            embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001", google_api_key=api_key)
+            # Fixing lint error: some versions use 'api_key', others 'google_api_key'. 
+            # Trying to be compatible or letting it fall back to environment.
+            embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001") 
             logger.info("✅ Embeddings model initialized.")
         except Exception as e:
             logger.error(f"❌ Failed to initialize Embeddings: {e}")
@@ -1717,7 +1701,11 @@ ResponseFormat1 = {
 }
 
 
-def process_message(message_content: str, conversation_id: str, tenant_id: str, employee_id: Optional[str] = None, push_name: str = "User", device_type: str = "unknown",phone_number: str = "2348021299221"):
+def process_message(message_content: str, conversation_id: str, tenant_id: str, employee_id: Optional[str] = None, push_name: str = "User", device_type: str = "unknown", phone_number: str = "2348021299221"):
+    import json
+    import difflib
+    from datetime import datetime
+    
     # Fallback for employee_id
     if not employee_id:
         employee_id = DEFAULT_EMPLOYEE_ID
@@ -1744,6 +1732,10 @@ def process_message(message_content: str, conversation_id: str, tenant_id: str, 
     prompt_id = None
     db_uri = os.getenv("DATABASE_URL")
     p_res = None
+    biller_items = None
+    biller_names = []
+    categories = []
+    agent_prompt = None
 
     try:
         with SessionLocal() as session:
@@ -1772,6 +1764,20 @@ def process_message(message_content: str, conversation_id: str, tenant_id: str, 
     if p_res:
         log_info(f"Prompt template found: {p_res[0][:50]}...", tenant_id, conversation_id)
         agent_prompt = p_res[0]
+        # --- NEW: extract categories and biller names ---
+        biller_items = p_res[3] if len(p_res) > 3 else None
+        if biller_items:
+            try:
+                import json
+                billers = json.loads(biller_items) if isinstance(biller_items, str) else biller_items
+                categories = list({b.get("category") for b in billers if b.get("category")})
+                biller_names = [b.get("name") for b in billers if b.get("name")]
+            except Exception as e:
+                log_error(f"Failed to parse biller_items JSON: {e}", tenant_id, conversation_id)
+
+        # Now you can use categories and biller_names lists in your chatbot logic
+        log_info(f"Extracted {len(categories)} categories and {len(biller_names)} biller names", tenant_id, conversation_id)
+        
     else:
         log_warning("No prompt template found in DB. Using global default.", tenant_id, conversation_id)
         agent_prompt = GLOBAL_FINAL_ANSWER_PROMPT    
@@ -1791,6 +1797,33 @@ def process_message(message_content: str, conversation_id: str, tenant_id: str, 
             system_prompt = system_prompt.replace("{current_date_str}", str(current_date_str))
             system_prompt = system_prompt.replace("{ID}", str(employee_id))
             system_prompt = system_prompt.replace("{tool_intent_map}", str(p_res[2] if p_res else tool_guide))
+
+            # --- DYNAMIC BILLER CONTEXT (Task 2) ---
+            if biller_names and message_content:
+                # Match against words in the message
+                words = message_content.split()
+                matches = []
+                for word in words:
+                    if len(word) > 3: # Only match meaningful words
+                        m = difflib.get_close_matches(word, biller_names, n=1, cutoff=0.7)
+                        if m: matches.extend(m)
+                
+                # Deduplicate and get full biller info
+                unique_matches = list(set(matches))
+                if unique_matches:
+                    billers_json = json.loads(biller_items) if isinstance(biller_items, str) else biller_items
+                    context_fragments = []
+                    for name in unique_matches:
+                        info = next((b for b in billers_json if b.get("name") == name), None)
+                        if info:
+                            fee = info.get("convenienceFee", "0")
+                            cat = info.get("category", "General")
+                            context_fragments.append(f"- {name} (Category: {cat}, Fee: ₦{fee})")
+                    
+                    if context_fragments:
+                        biller_context = "\n".join(context_fragments)
+                        system_prompt += f"\n\n[CONTEXT: Available Billers]\nThe user's message might refer to these detected billers:\n{biller_context}\nUse this exact 'Name' and 'Category' when calling tools."
+
         except Exception as e:
                 logger.error(f"Error formatting prompt template: {e}")
                 system_prompt = agent_prompt

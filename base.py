@@ -241,7 +241,7 @@ class CustomerProfileInput(BaseModel):
 
 class LoanEligibilityInput(BaseModel):
     """Schema for evaluate_loan_eligibility_tool."""
-    phone_number:   str = Field(..., description="Customer's registered phone number")
+    # phone_number:   str = Field(..., description="Customer's registered phone number")
     amount:   str = Field(..., description="Amount of loan requested")
     tenor:   str = Field(..., description="Tenor of loan requested in months")
     facebook_url:   str = Field("", description="Facebook profile URL (optional) to assist credit evaluation")
@@ -275,10 +275,15 @@ class VerifyOTPInput(BaseModel):
 
 
 class ApplyForLoanInput(BaseModel):
-    phone_number:     str   = Field(..., description="Customer's registered phone number")
+    # phone_number:     str   = Field(..., description="Customer's registered phone number")
     amount_requested: float = Field(..., description="Loan amount requested in Naira")
     tenor:            int   = Field(..., description="Loan duration in months")
-    bank:             str   = Field("VFD Microfinance Bank", description="Customer's bank name")
+    # bank:             str   = Field("VFD Microfinance Bank", description="Customer's bank name")
+    facebook_url:   str = Field("", description="Facebook profile URL (optional) to assist credit evaluation")
+    linkedin_url:   str = Field("", description="LinkedIn profile URL (optional)")
+    instagram_url:  str = Field("", description="Instagram profile URL (optional)")
+    twitter_url:    str = Field("", description="Twitter / X profile URL (optional)")
+    tiktok_url:     str = Field("", description="TikTok profile URL (optional)")
 
 
 
@@ -405,25 +410,25 @@ class VFDAccountOpeningInput(BaseModel):
     """Input schema for opening a VFD bank account via NIN."""
     nin: str = Field(..., description="Customer's 11-digit National Identification Number (NIN).")
     date_of_birth: str = Field(..., description="Customer's date of birth in YYYY-MM-DD format (e.g. 1994-04-05).")
-    phone_number: str = Field(..., description="Customer's registered phone number used to link their banking profile.")
+    # phone_number: str = Field(..., description="Customer's registered phone number used to link their banking profile.")
     current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
 
 
 class FundWalletInput(BaseModel):
     """Input schema for retrieving wallet funding details."""
-    phone_number: str = Field(..., description="Customer's registered phone number.")
+    # phone_number: str = Field(..., description="Customer's registered phone number.")
     current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
 
 
 class BalanceEnquiryInput(BaseModel):
     """Input schema for wallet balance enquiry. PIN is required."""
-    phone_number: str = Field(..., description="Customer's registered phone number.")
+    # phone_number: str = Field(..., description="Customer's registered phone number.")
     current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
 
 
 class BuyAirtimeInput(BaseModel):
     """Input schema for purchasing airtime for self or a third party."""
-    phone_number: str = Field(..., description="Customer's registered phone number (the payer).")
+    # phone_number: str = Field(..., description="Customer's registered phone number (the payer).")
     network: str = Field(..., description="Telecom network name, e.g. MTN, Airtel, Glo, 9mobile.")
     amount: str = Field(..., description="Airtime amount in Naira (e.g. '500').")
     recipient_type: str = Field(
@@ -439,7 +444,7 @@ class BuyAirtimeInput(BaseModel):
 
 class PayBillInput(BaseModel):
     """Input schema for bill payment. Customer provides only biller name, reference, and amount."""
-    phone_number: str = Field(..., description="Customer's registered phone number.")
+    # phone_number: str = Field(..., description="Customer's registered phone number.")
     biller_name: str = Field(
         ...,
         description=(
@@ -456,6 +461,7 @@ class PayBillInput(BaseModel):
         ),
     )
     amount: str = Field(..., description="Amount to pay in Naira.")
+    confirm_fee: bool = Field(default=False, description="True if the customer has already confirmed the convenience fee and validated details.")
     current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
 
 
@@ -468,7 +474,7 @@ class BeneficiaryLookupInput(BaseModel):
 
 class TransferMoneyInput(BaseModel):
     """Input schema for executing a funds transfer. PIN is required to authorise."""
-    phone_number: str = Field(..., description="Sender's registered phone number.")
+    # phone_number: str = Field(..., description="Sender's registered phone number.")
     beneficiary_account_number: str = Field(..., description="Recipient's bank account number.")
     beneficiary_bank: str = Field(..., description="Recipient's bank name (e.g. Access Bank, Zenith Bank).")
     amount: str = Field(..., description="Transfer amount in Naira.")
@@ -478,7 +484,7 @@ class TransferMoneyInput(BaseModel):
 
 class ChangePinInput(BaseModel):
     """Input schema for changing the customer's 4-digit banking PIN."""
-    phone_number: str = Field(..., description="Customer's registered phone number.")
+    # phone_number: str = Field(..., description="Customer's registered phone number.")
     old_pin: str = Field(..., description="Current 4-digit PIN.")
     new_pin: str = Field(..., description="New 4-digit PIN the customer wishes to set.")
     confirm_new_pin: str = Field(..., description="Must match new_pin exactly.")
@@ -487,7 +493,7 @@ class ChangePinInput(BaseModel):
 
 class ForgotPinInput(BaseModel):
     """Input schema for resetting the PIN via NIN + liveness verification."""
-    phone_number: str = Field(..., description="Customer's registered phone number.")
+    # phone_number: str = Field(..., description="Customer's registered phone number.")
     nin: str = Field(..., description="Customer's National Identification Number (NIN).")
     new_pin: str = Field(..., description="New 4-digit PIN to set after identity verification.")
     confirm_new_pin: str = Field(..., description="Must match new_pin exactly.")
@@ -496,13 +502,13 @@ class ForgotPinInput(BaseModel):
 
 class SavedBillersInput(BaseModel):
     """Input schema for retrieving a customer's list of saved (quick-pay) billers."""
-    phone_number: str = Field(..., description="Customer's registered phone number.")
+    # phone_number: str = Field(..., description="Customer's registered phone number.")
     current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
 
 
 class DeleteSavedBillerInput(BaseModel):
     """Input schema for removing a saved biller from the customer's quick-pay list."""
-    phone_number: str = Field(..., description="Customer's registered phone number.")
+    # phone_number: str = Field(..., description="Customer's registered phone number.")
     biller_name: str = Field(..., description="Name of the biller to remove.")
     reference_number: str = Field(..., description="Reference (meter number / smart card) associated with the saved biller.")
     current_tool_id: Optional[str] = Field(None, description="Injected tool call ID")
