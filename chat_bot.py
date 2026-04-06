@@ -1699,7 +1699,14 @@ ResponseFormat1 = {
     },
     "required": ["answer", "leave_application", "visualization_image", "visualization_analysis"]
 }
-
+def to_local(phone_number: str) -> str:
+    """
+    Convert an international Nigerian phone number (e.g. 2348021299221)
+    into local format (e.g. 08021299221).
+    """
+    if phone_number.startswith("234"):
+        return "0" + phone_number[3:]
+    return phone_number
 
 def process_message(message_content: str, conversation_id: str, tenant_id: str, employee_id: Optional[str] = None, push_name: str = "User", device_type: str = "unknown", phone_number: str = "2348021299221"):
     import json
@@ -1838,7 +1845,8 @@ def process_message(message_content: str, conversation_id: str, tenant_id: str, 
         
         config = {"configurable": {"thread_id": conversation_id}}
         systematic_prompt = f"{system_prompt}\n\n{greeting_instruction}{golden_rules}"
-        phone_number1="08027790963"
+        # phone_number1="08027790963"
+        phone_number=to_local(phone_number)
         context = Context(
             tenant_id=tenant_id,
             conversation_id=conversation_id,
@@ -1846,7 +1854,7 @@ def process_message(message_content: str, conversation_id: str, tenant_id: str, 
             db_uri=db_uri,
             push_name=push_name,
             device_type=device_type,
-            phone_number=phone_number1,
+            phone_number=phone_number,
             agent_prompt=p_res[0] if p_res else GLOBAL_FINAL_ANSWER_PROMPT,
             final_answer_prompt=p_res[1] if p_res else GLOBAL_FINAL_ANSWER_PROMPT,
             tool_intent_map=p_res[2] if p_res else tool_guide,
