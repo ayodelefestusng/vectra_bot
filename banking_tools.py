@@ -24,7 +24,7 @@ Covered services
  11.  Saved Billers (del)  – delete_saved_biller_tool
  12.  Bank List            – get_bank_list_tool
 """
-from math import log
+from math import e, log
 import os
 import re
 import uuid
@@ -1987,7 +1987,81 @@ def create_customer_profile_tool(runtime: ToolRuntime[Context], **kwargs) -> str
                 # conn.commit()
         finally:
             engine.dispose()
+    ### Funding the account with a welcome bonus (optional, can be removed if not desired)
+        try:
+            import hashlib
+            import uuid
+            import requests
+                    # Sender / FROM account  (Dignity Management Concept Limited)
+            FROM_ACCOUNT    = "1001694651"
+            TO_ACCOUNT    = account_number
+            FROM_CLIENT_ID  = "154658"
+            FROM_CLIENT     = "Dignity Management Concept Limited"
+            FROM_SAVINGS_ID = "169465"
+            FROM_BVN        = ""
+            WALLET_NAME = "Dignity"   # used as reference prefix
+            token   = _get_access_token()
+            def _sha512(from_acct: str, to_acct: str) -> str:
+                """Generate the required SHA-512 transfer signature."""
+                return hashlib.sha512(f"{from_acct}{to_acct}".encode()).hexdigest()
+            
+            def _ref() -> str:
+                """Generate a unique wallet-prefixed transaction reference."""
+                return f"{WALLET_NAME}-{uuid.uuid4().hex[:16].upper()}"
+            
+            r = requests.get(f"{WALLET_BASE_URL}/transfer/recipient", headers={"AccessToken": token},
+                        params={"accountNo": account_number, "bank": "999999",
+                                "transfer_type": "intra"})
+            r.raise_for_status()
+            td = r.json()
+            log_info(f"           Response: {td}", tenant_id, conversation_id)
+            if td.get("status") != "00":
+                raise Exception(f"Recipient lookup failed [{td['status']}]: {td['message']}")
 
+            info         = td["data"]
+            to_savings_id = info["account"].get("id")   # mandatory for intra
+            log_info(f"           TO: {info.get('name')} | clientId={info.get('clientId')} | savingsId={to_savings_id}", tenant_id, conversation_id)
+
+            # Signature
+            sig = _sha512(FROM_ACCOUNT, account_number)
+            log_info(f"\n[ Step 2 ] Signature (SHA512): {sig[:40]}...", tenant_id, conversation_id)
+
+            # Transfer
+            ref     = _ref()
+            payload = {
+                "fromAccount":           FROM_ACCOUNT,
+                "uniqueSenderAccountId": "",
+                "fromClientId":          FROM_CLIENT_ID,
+                "fromClient":            FROM_CLIENT,
+                "fromSavingsId":         FROM_SAVINGS_ID,
+                "fromBvn":               FROM_BVN,
+                "toClientId":            info.get("clientId"),
+                "toClient":              info.get("name"),
+                "toSavingsId":           to_savings_id,  # mandatory for intra
+                "toSession":             "",
+                "toBvn":                 info.get("bvn", ""),
+                "toAccount":             account_number,
+                "toBank":                "999999",        # VFD bank code
+                "signature":             sig,
+                "amount":                str(50_000),
+                "remark":                "Intra transfer",
+                "transferType":          "intra",
+                "reference":             ref,
+            }
+            
+            # print(f"\n[ Step 3 ] Sending ₦{amount:,} → {to_account} ({info.get('name')}) | Ref: {ref}")
+
+            r2 = requests.post(f"{WALLET_BASE_URL}/transfer", headers={"AccessToken": token}, json=payload)
+            r2.raise_for_status()
+            res = r2.json()
+            log_info(f" Transfer response: {res}", tenant_id, conversation_id)
+        except Exception as exc:
+            log_error(f"Initial funding transfer error: {exc}", tenant_id, conversation_id)
+            return f"Account created with VFD but failed to fund the account with the welcome bonus: {exc}"
+            # We don't want to fail the entire account creation if the bonus transfer fails, so we    
+            
+
+            
     except Exception as exc:
         log_error(f"DB persist error: {exc}", tenant_id, conversation_id)
         return f"Account created with VFD but failed to save locally: {exc}"
@@ -2002,15 +2076,13 @@ def create_customer_profile_tool(runtime: ToolRuntime[Context], **kwargs) -> str
         setup_link = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/?phone={phone}&tenant_id={tenant_id}"  # fallback (no token)
 
     return (
-        "### SYSTEM_INSTRUCTION: DO NOT ALTER THE URL BELOW OR CHANGE THE ACCOUNT NUMBER. "
-        "USE THE LINK AND ACCOUNT NUMBER EXACTLY AS PROVIDED. ###\n\n"
-        f"Your Vectra account is now active! 🎉\n\n"
-        f"• Account Number: {account_number}\n"
+        f"Your Vectra account has been created successfully! 🎉\n\n"
+        f"• *Account Number*: {account_number}\n"
         f"• Bank: VFD Microfinance Bank\n"
         f"• Account Name: {full_name}\n\n"
-        f"🚀 Please set your secure banking password using the link provided. The link expires in {PASSWORD_SETUP_TOKEN_EXPIRY_HOURS} hours and can only be used once.\n\n"
-        f"🔐 {setup_link}\n\n"
-        f"Once you’ve completed that step, let me know what you’d like to do next—check your balance, transfer funds, apply for a loan, or anything else!"
+        f"🔐 Set your secure banking password using this link (expires in {PASSWORD_SETUP_TOKEN_EXPIRY_HOURS} hours, one‑time use):\n"
+        f"{setup_link}\n\n"
+        f"Once you’ve set your password, let me know how I can assist you next—checking your balance, transferring funds, applying for a loan, or anything else you need."
     )
 
 
@@ -2033,12 +2105,12 @@ def balance_enquiry_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
     log_info(f"balance_enquiry_tool invoked for phone: {phone_number}", tenant_id, conversation_id)
 
     try:
-        if runtime.context.device_type != "phone":
-             return "Please note: for your security, banking transactions can only be performed from your mobile device."
+        # if runtime.context.device_type != "phone":
+        #      return "Please note: for your security, banking transactions can only be performed from your mobile device."
 
-        auth = _authenticate(db_uri, phone_number, "resume_balance_enquiry", tenant_id)
-        if auth["status"] != "authenticated":
-            return auth["message"]
+        # auth = _authenticate(db_uri, phone_number, "resume_balance_enquiry", tenant_id)
+        # if auth["status"] != "authenticated":
+        #     return auth["message"]
 
         profile = _get_customer_account(db_uri, phone_number)
         headers = _wallet_headers()
@@ -2715,7 +2787,7 @@ def change_password_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
 # 8. CHANGE PIN
 # ──────────────────────────────────────────────────────────────────────────────
 
-@tool("change_pin_tool", args_schema=ChangePasswordInput)
+@tool("change_pin_toolv1", args_schema=ChangePasswordInput)
 def change_password_toolv1(runtime: ToolRuntime[Context], **kwargs) -> str:
     """
     Changes the customer's 4-digit banking PIN.
@@ -2773,7 +2845,7 @@ def change_password_toolv1(runtime: ToolRuntime[Context], **kwargs) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 
 # @tool("forgot_password_tool", args_schema=ForgotPasswordInput)
-@tool("forgot_password_tool")
+@tool("forgot_password_toolv1")
 def forgot_password_toolv1(runtime: ToolRuntime[Context], **kwargs) -> str:
     """
     Resets the customer's password after NIN + liveness verification.

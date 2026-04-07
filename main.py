@@ -43,7 +43,7 @@ def log_debug(msg, tenant_id, conversation_id):
 app = FastAPI(title="Chatbot API", description="FastAPI Refactor with WhatsApp Integration")
 
 DEFAULT_EMPLOYEE_ID = "obinna.kelechi.adewale@dignityconcept.tech"
-DEBUG_MODE = True
+DEBUG_MODE = False
 
 class ChatRequest(BaseModel):
     message: str
@@ -564,9 +564,10 @@ async def whatsapp_webhook2(payload: WebhookPayload):
     )
     return response
 
-
+# payload: WebhookPayload
 @app.post("/webhook3")
-async def whatsapp_webhook3(request: Request):
+async def whatsapp_webhook3(request: WebhookPayload):
+# async def whatsapp_webhook3(request: Request):
     log_info("Received webhook2 request", "unknown", "unknown")
     try:
         if DEBUG_MODE:
