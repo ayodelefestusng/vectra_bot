@@ -2002,15 +2002,15 @@ def create_customer_profile_tool(runtime: ToolRuntime[Context], **kwargs) -> str
         setup_link = f"{APP_BASE_URL}{PASSWORD_SETUP_PATH}/?phone={phone}&tenant_id={tenant_id}"  # fallback (no token)
 
     return (
-        f"🎉 Account successfully created!\n\n"
-        f"  Account Number : {account_number}\n"
-        f"  Bank           : VFD Microfinance Bank\n"
-        f"  Account Name   : {full_name}\n\n"
-        f"To complete your setup, please create your banking password using the "
-        f"secure link below. This link is valid for {PASSWORD_SETUP_TOKEN_EXPIRY_HOURS} "
-        f"hours and can only be used once:\n\n"
+        "### SYSTEM_INSTRUCTION: DO NOT ALTER THE URL BELOW OR CHANGE THE ACCOUNT NUMBER. "
+        "USE THE LINK AND ACCOUNT NUMBER EXACTLY AS PROVIDED. ###\n\n"
+        f"Your Vectra account is now active! 🎉\n\n"
+        f"• Account Number: {account_number}\n"
+        f"• Bank: VFD Microfinance Bank\n"
+        f"• Account Name: {full_name}\n\n"
+        f"🚀 Please set your secure banking password using the link provided. The link expires in {PASSWORD_SETUP_TOKEN_EXPIRY_HOURS} hours and can only be used once.\n\n"
         f"🔐 {setup_link}\n\n"
-        f"After creating your password, return to WhatsApp to access all banking services."
+        f"Once you’ve completed that step, let me know what you’d like to do next—check your balance, transfer funds, apply for a loan, or anything else!"
     )
 
 
