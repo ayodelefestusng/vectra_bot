@@ -1842,7 +1842,7 @@ def create_customer_profile_tool(runtime: ToolRuntime[Context], **kwargs) -> str
             params={"nin": nin, "dateOfBirth": dob_str},
             json={},
             headers=headers,
-            timeout=30,
+            timeout=60,
         )
         log_info(f"Account Creation Response: {resp}", tenant_id, conversation_id)
         vfd_data = resp.json()
@@ -1864,8 +1864,8 @@ def create_customer_profile_tool(runtime: ToolRuntime[Context], **kwargs) -> str
 
         account_info   = vfd_data.get("data", {})
         account_number = (
-            account_info.get("accountNumber")
-            or account_info.get("account_number", "")
+            account_info.get("accountNo")
+            or account_info.get("accountNo", "")
         )
         full_name = (
             account_info.get("fullName")
