@@ -372,6 +372,15 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={"detail": exc.errors()}
     )
 
+
+def to_international(phone_number: str) -> str:
+    """
+    Convert an international Nigerian phone number (e.g. 2348021299221)
+    into local format (e.g. 08021299221).
+    """
+    if phone_number.startswith("0"):
+        return "234" + phone_number[1:]
+    return phone_number
 @app.post("/webhook/trigger_cta")
 async def trigger_cta_webhook(payload: CTAPayload):
     log_info("Triggering CTA", "sudo_tenant_id", "sudo_conversation_id")
@@ -386,7 +395,7 @@ async def trigger_cta_webhook(payload: CTAPayload):
         prompt = f"The customer {payload.customer_name} just accepted their loan offer. Congratulate them briefly and tell them their funds have been successfully disbursed."
     else:
         prompt = f"The customer {payload.customer_name} just completed an action: {payload.event}. Offer them further assistance."
-        
+    intl_phone=to_international(payload.phone_number)   
     try:
         response = process_message(
             message_content=prompt,
@@ -401,12 +410,47 @@ async def trigger_cta_webhook(payload: CTAPayload):
             # device_type: "phone"
             # device_type: "system"
         )
+
+
+        log_info(f"Chatbot response keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}", tenant_id, phone_number)
+        if isinstance(response, dict):
+            viz_image = response.get("viz_image")
+            log_info(f"Response viz_image present: {bool(viz_image)}", tenant_id, intl_phone)
+            if viz_image:
+                log_info(f"Entering image sending block. Image length: {len(viz_image)}", tenant_id, intl_phone)
+                # Send image first
+                media_res = send_media_message(
+                    intl_phone, 
+                    viz_image, 
+                    caption="Here is the chart you requested."
+                )
+                log_info(f"Media API response status: {media_res.status_code}", tenant_id, intl_phone)
+                
+                # Send analysis text separately
+                text_to_send = response.get("text", "Analysis complete.")
+                return send_whatsapp_message(intl_phone, text_to_send)
+            else:
+                log_info("No visualization image found in dict response.", tenant_id, intl_phone)
+        else:
+            log_info(f"Response is not a dict, it is a {type(response)}. Skipping image logic.", tenant_id, intl_phone)
+        
+        # Fallback for text-only responses
         text_content = response.get("text", str(response)) if isinstance(response, dict) else str(response)
-        message_res = send_whatsapp_message(payload.phone_number, text_content)
-        return {"status": "success", "message": "CTA sent", "content": text_content, "whatsapp_response": message_res}
+        message_res = send_whatsapp_message(intl_phone, text_content)
+        log_info(f"Text message API response: {message_res}", tenant_id, intl_phone)
+        return message_res
+
     except Exception as e:
-        log_error(f"Error in trigger_cta: {e}", payload.tenant_id, "system")
+        log_error(f"Error in webhook: {e}", "unknown", "unknown")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+    #     text_content = response.get("text", str(response)) if isinstance(response, dict) else str(response)
+    #     message_res = send_whatsapp_message(payload.phone_number, text_content)
+    #     return {"status": "success", "message": "CTA sent", "content": text_content, "whatsapp_response": message_res}
+    # except Exception as e:
+    #     log_error(f"Error in trigger_cta: {e}", payload.tenant_id, "system")
+    #     raise HTTPException(status_code=500, detail=str(e))
 # {
 #   "message": "I need chart of monthly transaction count from inception till date",
 #   "phone_number": "2348021299221",

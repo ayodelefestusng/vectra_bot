@@ -1719,6 +1719,16 @@ def to_local(phone_number: str) -> str:
         return "0" + phone_number[3:]
     return phone_number
 
+
+def to_international(phone_number: str) -> str:
+    """
+    Convert an international Nigerian phone number (e.g. 2348021299221)
+    into local format (e.g. 08021299221).
+    """
+    if phone_number.startswith("0"):
+        return "234" + phone_number[1:]
+    return phone_number
+
 def process_message(message_content: str, conversation_id: str, tenant_id: str, employee_id: Optional[str] = None, push_name: str = "User", device_type: str = "unknown", phone_number: str = "2348021299221"):
     import json
     import difflib
