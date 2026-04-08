@@ -1,5 +1,7 @@
 from math import log
 from multiprocessing.dummy.connection import Client
+import uuid
+from datetime import datetime
 import os
 import re
 import requests
@@ -381,10 +383,49 @@ def to_international(phone_number: str) -> str:
     if phone_number.startswith("0"):
         return "234" + phone_number[1:]
     return phone_number
+
+
+def generate_conversation_id(phone_number: str, event: str, reference: Optional[str] = None) -> str:
+    """
+    Generate a unique, isolated conversation ID for each transaction/event.
+    
+    This prevents conversation history bloat by creating new conversation contexts
+    for authenticated/committed transactions.
+    
+    Args:
+        phone_number: Customer phone number
+        event: Event type (password_created, auth_completed, loan_accepted, inward_credit, etc.)
+        reference: Optional transaction reference (for payment events)
+    
+    Returns:
+        str: Formatted conversation ID like "phone_2348021299221_auth_uuid_timestamp"
+    """
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    unique_id = str(uuid.uuid4())[:8]  # Short UUID for readability
+    
+    # For payment-related events with reference, use reference as primary identifier
+    if reference and event in ["inward_credit", "loan_accepted"]:
+        return f"{phone_number}_{reference}_{unique_id}"
+    
+    # For auth events, create isolated session
+    if event == "auth_completed":
+        return f"{phone_number}_auth_{timestamp}_{unique_id}"
+    
+    # Default: combine phone, event, timestamp, and UUID
+    return f"{phone_number}_{event}_{timestamp}_{unique_id}"
 @app.post("/webhook/trigger_cta")
 async def trigger_cta_webhook(payload: CTAPayload):
     log_info("Triggering CTA", "sudo_tenant_id", "sudo_conversation_id")
     log_info(f"Triggering CTA for {payload.phone_number} on event {payload.event}", payload.tenant_id, "system")
+    
+    # Generate isolated conversation ID for this transaction/event
+    # This prevents memory bloat by creating new conversation contexts
+    new_conversation_id = generate_conversation_id(
+        phone_number=payload.phone_number,
+        event=payload.event,
+        reference=payload.reference
+    )
+    log_info(f"Generated new conversation_id: {new_conversation_id}", payload.tenant_id, payload.phone_number)
     
     # Prompt context for CTA
     if payload.event == "password_created":
@@ -395,53 +436,60 @@ async def trigger_cta_webhook(payload: CTAPayload):
         prompt = f"The customer {payload.customer_name} just accepted their loan offer. Congratulate them briefly and tell them their funds have been successfully disbursed."
     else:
         prompt = f"The customer {payload.customer_name} just completed an action: {payload.event}. Offer them further assistance."
-    intl_phone=to_international(payload.phone_number)   
+    
+    intl_phone = to_international(payload.phone_number)   
     try:
         response = process_message(
             message_content=prompt,
-            conversation_id=payload.phone_number,
-            # conversation_id="conv_6sddwwwdddeeee",
+            # conversation_id=new_conversation_id,  # Use fresh conversation ID
+            conversation_id=payload.phone_number,  # Use fresh conversation ID
             phone_number=payload.phone_number,
             tenant_id=payload.tenant_id,
             employee_id=payload.employee_id,
-            # employee_id="EMP12345",
             push_name=payload.customer_name,
             device_type="phone"
-            # device_type: "phone"
-            # device_type: "system"
         )
 
-
-        log_info(f"Chatbot response keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}", tenant_id, phone_number)
+        log_info(f"Chatbot response keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}", payload.tenant_id, intl_phone)
+        
         if isinstance(response, dict):
             viz_image = response.get("viz_image")
-            log_info(f"Response viz_image present: {bool(viz_image)}", tenant_id, intl_phone)
+            log_info(f"Response viz_image present: {bool(viz_image)}", payload.tenant_id, intl_phone)
             if viz_image:
-                log_info(f"Entering image sending block. Image length: {len(viz_image)}", tenant_id, intl_phone)
+                log_info(f"Entering image sending block. Image length: {len(viz_image)}", payload.tenant_id, intl_phone)
                 # Send image first
                 media_res = send_media_message(
                     intl_phone, 
                     viz_image, 
                     caption="Here is the chart you requested."
                 )
-                log_info(f"Media API response status: {media_res.status_code}", tenant_id, intl_phone)
+                log_info(f"Media API response status: {media_res.status_code}", payload.tenant_id, intl_phone)
                 
                 # Send analysis text separately
                 text_to_send = response.get("text", "Analysis complete.")
-                return send_whatsapp_message(intl_phone, text_to_send)
+                result = send_whatsapp_message(intl_phone, text_to_send)
             else:
-                log_info("No visualization image found in dict response.", tenant_id, intl_phone)
+                log_info("No visualization image found in dict response.", payload.tenant_id, intl_phone)
+                text_content = response.get("text", str(response))
+                result = send_whatsapp_message(intl_phone, text_content)
         else:
-            log_info(f"Response is not a dict, it is a {type(response)}. Skipping image logic.", tenant_id, intl_phone)
+            log_info(f"Response is not a dict, it is a {type(response)}. Skipping image logic.", payload.tenant_id, intl_phone)
+            text_content = str(response)
+            result = send_whatsapp_message(intl_phone, text_content)
         
-        # Fallback for text-only responses
-        text_content = response.get("text", str(response)) if isinstance(response, dict) else str(response)
-        message_res = send_whatsapp_message(intl_phone, text_content)
-        log_info(f"Text message API response: {message_res}", tenant_id, intl_phone)
-        return message_res
+        log_info(f"Text message API response: {result}", payload.tenant_id, intl_phone)
+        
+        # Return new conversation ID for client to use in future requests
+        return {
+            "status": "success",
+            "message": "CTA triggered successfully",
+            "new_conversation_id": new_conversation_id,
+            "event": payload.event,
+            "phone_number": payload.phone_number
+        }
 
     except Exception as e:
-        log_error(f"Error in webhook: {e}", "unknown", "unknown")
+        log_error(f"Error in trigger_cta_webhook: {e}", payload.tenant_id, payload.phone_number)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -475,15 +523,17 @@ async def vfd_inward_credit_webhook(payload: VFDInwardCredit):
             cust = conn.execute(query, {"acc": payload.accountNumber}).fetchone()
             if not cust:
                 return {"status": "error", "message": "Customer not found"}
+            
             cta_payload = CTAPayload(
                 phone_number=cust[0],
                 event="inward_credit",
                 customer_name=cust[1],
                 amount=payload.amount,
-                reference=payload.reference
+                reference=payload.reference  # Reference ensures isolated conversation context
             )
-            await trigger_cta_webhook(cta_payload)
-            return {"status": "success"}
+            result = await trigger_cta_webhook(cta_payload)
+            log_info(f"CTA triggered for inward credit. New conversation_id: {result.get('new_conversation_id')}", "system", "system")
+            return result
     except Exception as e:
         log_error(f"VFD Webhook error: {e}", "system", "system")
         return {"status": "error", "message": str(e)}
