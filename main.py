@@ -357,6 +357,93 @@ async def load_pdf(request: LoadPDFRequest):
         log_error(f"Unexpected error in load_pdf: {e}", tenant_id, "system")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+# Custom handler for validation errors
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    # Log the validation error
+    log_error(f"Validation failed: {exc.errors()}", "DMC", "system")
+    # Return a JSON response with details
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()}
+    )
+
+@app.post("/webhook/trigger_cta")
+async def trigger_cta_webhook(payload: CTAPayload):
+    log_info("Triggering CTA", "sudo_tenant_id", "sudo_conversation_id")
+    log_info(f"Triggering CTA for {payload.phone_number} on event {payload.event}", payload.tenant_id, "system")
+    
+    # Prompt context for CTA
+    if payload.event == "password_created":
+        prompt = f"The customer {payload.customer_name} just successfully created their banking password. Congratulate them briefly and ask if they'd like to check their balance, transfer funds, or apply for a loan now."
+    elif payload.event == "auth_completed":
+        prompt = f"The customer {payload.customer_name} just successfully authenticated. Now automatically resume and execute what they were trying to do with this pending intent: {payload.pending_intent}"
+    elif payload.event == "loan_accepted":
+        prompt = f"The customer {payload.customer_name} just accepted their loan offer. Congratulate them briefly and tell them their funds have been successfully disbursed."
+    else:
+        prompt = f"The customer {payload.customer_name} just completed an action: {payload.event}. Offer them further assistance."
+        
+    try:
+        response = process_message(
+            message_content=prompt,
+            conversation_id=payload.phone_number,
+            # conversation_id="conv_6sddwwwdddeeee",
+            phone_number=payload.phone_number,
+            tenant_id=payload.tenant_id,
+            employee_id=payload.employee_id,
+            # employee_id="EMP12345",
+            push_name=payload.customer_name,
+            device_type="phone"
+            # device_type: "phone"
+            # device_type: "system"
+        )
+        text_content = response.get("text", str(response)) if isinstance(response, dict) else str(response)
+        message_res = send_whatsapp_message(payload.phone_number, text_content)
+        return {"status": "success", "message": "CTA sent", "content": text_content, "whatsapp_response": message_res}
+    except Exception as e:
+        log_error(f"Error in trigger_cta: {e}", payload.tenant_id, "system")
+        raise HTTPException(status_code=500, detail=str(e))
+# {
+#   "message": "I need chart of monthly transaction count from inception till date",
+#   "phone_number": "2348021299221",
+#   "pushName": "User",
+#   "tenant_id": "DMC",
+#   "employee_id": "EMP12345",
+#   "conversation_id": "conv_67890",
+#   "device_type": "phone"
+# }
+@app.post("/webhook/vfd_inward_credit")
+async def vfd_inward_credit_webhook(payload: VFDInwardCredit):
+    log_info(f"Received VFD Credit: {payload.reference}", "system", "system")
+    db_uri = os.getenv("DATABASE_URL")
+    if not db_uri:
+        return {"status": "error", "message": "DB URL not set"}
+    try:
+        if db_uri.startswith("postgres://"):
+            db_uri = db_uri.replace("postgres://", "postgresql://", 1)
+        engine = create_engine(db_uri)
+        with engine.connect() as conn:
+            query = text("SELECT phone_number, first_name FROM customer_customer WHERE account_number = :acc")
+            cust = conn.execute(query, {"acc": payload.accountNumber}).fetchone()
+            if not cust:
+                return {"status": "error", "message": "Customer not found"}
+            cta_payload = CTAPayload(
+                phone_number=cust[0],
+                event="inward_credit",
+                customer_name=cust[1],
+                amount=payload.amount,
+                reference=payload.reference
+            )
+            await trigger_cta_webhook(cta_payload)
+            return {"status": "success"}
+    except Exception as e:
+        log_error(f"VFD Webhook error: {e}", "system", "system")
+        return {"status": "error", "message": str(e)}
+
 @app.post("/webhook")
 async def whatsapp_webhook(request: Request):
     log_info("Received webhook request", "unknown", "unknown")
@@ -454,93 +541,6 @@ async def whatsapp_webhook(request: Request):
         log_error(f"Error in webhook: {e}", "unknown", "unknown")
         raise HTTPException(status_code=500, detail=str(e))
 
-from fastapi import FastAPI, Request
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
-# Custom handler for validation errors
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    # Log the validation error
-    log_error(f"Validation failed: {exc.errors()}", "DMC", "system")
-    # Return a JSON response with details
-    return JSONResponse(
-        status_code=422,
-        content={"detail": exc.errors()}
-    )
-
-@app.post("/webhook/trigger_cta")
-async def trigger_cta_webhook(payload: CTAPayload):
-    log_info("Triggering CTA", "sudo_tenant_id", "sudo_conversation_id")
-    log_info(f"Triggering CTA for {payload.phone_number} on event {payload.event}", payload.tenant_id, "system")
-    
-    # Prompt context for CTA
-    if payload.event == "password_created":
-        prompt = f"The customer {payload.customer_name} just successfully created their banking password. Congratulate them briefly and ask if they'd like to check their balance, transfer funds, or apply for a loan now."
-    elif payload.event == "auth_completed":
-        prompt = f"The customer {payload.customer_name} just successfully authenticated. Now automatically resume and execute what they were trying to do with this pending intent: {payload.pending_intent}"
-    elif payload.event == "loan_accepted":
-        prompt = f"The customer {payload.customer_name} just accepted their loan offer. Congratulate them briefly and tell them their funds have been successfully disbursed."
-    else:
-        prompt = f"The customer {payload.customer_name} just completed an action: {payload.event}. Offer them further assistance."
-        
-    try:
-        response = process_message(
-            message_content=prompt,
-            conversation_id=payload.phone_number,
-            # conversation_id="conv_6sddwwwdddeeee",
-            phone_number=payload.phone_number,
-            tenant_id=payload.tenant_id,
-            employee_id=payload.employee_id,
-            # employee_id="EMP12345",
-            push_name=payload.customer_name,
-            device_type="phone"
-            # device_type: "phone"
-            # device_type: "system"
-        )
-        text_content = response.get("text", str(response)) if isinstance(response, dict) else str(response)
-        message_res = send_whatsapp_message(payload.phone_number, text_content)
-        return {"status": "success", "message": "CTA sent", "content": text_content, "whatsapp_response": message_res}
-    except Exception as e:
-        log_error(f"Error in trigger_cta: {e}", payload.tenant_id, "system")
-        raise HTTPException(status_code=500, detail=str(e))
-# {
-#   "message": "I need chart of monthly transaction count from inception till date",
-#   "phone_number": "2348021299221",
-#   "pushName": "User",
-#   "tenant_id": "DMC",
-#   "employee_id": "EMP12345",
-#   "conversation_id": "conv_67890",
-#   "device_type": "phone"
-# }
-@app.post("/webhook/vfd_inward_credit")
-async def vfd_inward_credit_webhook(payload: VFDInwardCredit):
-    log_info(f"Received VFD Credit: {payload.reference}", "system", "system")
-    db_uri = os.getenv("DATABASE_URL")
-    if not db_uri:
-        return {"status": "error", "message": "DB URL not set"}
-    try:
-        if db_uri.startswith("postgres://"):
-            db_uri = db_uri.replace("postgres://", "postgresql://", 1)
-        engine = create_engine(db_uri)
-        with engine.connect() as conn:
-            query = text("SELECT phone_number, first_name FROM customer_customer WHERE account_number = :acc")
-            cust = conn.execute(query, {"acc": payload.accountNumber}).fetchone()
-            if not cust:
-                return {"status": "error", "message": "Customer not found"}
-            cta_payload = CTAPayload(
-                phone_number=cust[0],
-                event="inward_credit",
-                customer_name=cust[1],
-                amount=payload.amount,
-                reference=payload.reference
-            )
-            await trigger_cta_webhook(cta_payload)
-            return {"status": "success"}
-    except Exception as e:
-        log_error(f"VFD Webhook error: {e}", "system", "system")
-        return {"status": "error", "message": str(e)}
-
-
 @app.post("/webhook2")
 async def whatsapp_webhook2(payload: WebhookPayload):
     # Now you can access JSON fields directly
@@ -563,6 +563,9 @@ async def whatsapp_webhook2(payload: WebhookPayload):
         device_type=device_type
     )
     return response
+
+
+
 
 # payload: WebhookPayload
 @app.post("/webhook3")
