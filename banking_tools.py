@@ -30,6 +30,7 @@ import re
 import uuid
 import hashlib
 import os
+import requests
 import uuid
 import json
 from datetime import datetime, timedelta, timezone as dt_timezone
@@ -1832,7 +1833,7 @@ def create_customer_profile_tool(runtime: ToolRuntime[Context], **kwargs) -> str
 
     # ── Step 1: Open VFD Account ──────────────────────────────────────────────
     try:
-        
+        import requests
         token   = _get_access_token()
         url     = f"{WALLET_BASE_URL}/client/tiers/individual"
         headers = {"AccessToken": token, "Content-Type": "application/json"}

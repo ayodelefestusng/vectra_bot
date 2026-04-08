@@ -406,7 +406,6 @@ def generate_conversation_id(phone_number: str, event: str, reference: Optional[
     # For payment-related events with reference, use reference as primary identifier
     if reference and event in ["inward_credit", "loan_accepted"]:
         return f"{phone_number}_{reference}_{unique_id}"
-    
     # For auth events, create isolated session
     if event == "auth_completed":
         return f"{phone_number}_auth_{timestamp}_{unique_id}"

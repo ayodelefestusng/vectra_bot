@@ -252,3 +252,9 @@
         ],
     },
 }
+
+
+
+# The paylod of evolution webhook request contains a lot of information about the message and sender. Here is an example of the payload structure:
+
+{'remoteJid': '2348021299221@s.whatsapp.net', 'remoteJidAlt': '2348021299221@s.whatsapp.net', 'fromMe': False, 'id': 'AC6FC776163B0257076CE58F73B6E805', 'participant': '', 'addressingMode': 'lid'}, 'pushName': 'Ayodele Adeyinka', 'status': 'DELIVERY_ACK', 'message': {'conversation': 'I need Airtime Airtel for myself 700', 'messageContextInfo': {'threadId': [], 'deviceListMetadata': {'senderKeyIndexes': [], 'recipientKeyIndexes': [], 'senderKeyHash': {'0': 202, '1': 204, '2': 138, '3': 189, '4': 250, '5': 67, '6': 207, '7': 221, '8': 147, '9': 250}, 'senderTimestamp': {'low': 1774552159, 'high': 0, 'unsigned': True}, 'recipientKeyHash': {'0': 130, '1': 228, '2': 83, '3': 161, '4': 126, '5': 111, '6': 23, '7': 137, '8': 76, '9': 55}, 'recipientTimestamp': {'low': 1774886066, 'high': 0, 'unsigned': True}}, 'deviceListMetadataVersion': 2, 'messageSecret': {'0': 150, '1': 160, '2': 254, '3': 45, '4': 176, '5': 30, '6': 15, '7': 206, '8': 73, '9': 86, '10': 47, '11': 42, '12': 148, '13': 71, '14': 108, '15': 82, '16': 40, '17': 62, '18': 177, '19': 45, '20': 44, '21': 124, '22': 228, '23': 84, '24': 118, '25': 98, '26': 4, '27': 55, '28': 28, '29': 49, '30': 247, '31': 94}}}, 'messageType': 'conversation', 'messageTimestamp': 1775618490, 'instanceId': '712a4424-63a3-449b-8c7f-77488faf46f4', 'source': 'android'}
