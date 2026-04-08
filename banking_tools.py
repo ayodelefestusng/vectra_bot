@@ -317,6 +317,7 @@ def _get_customer_account(db_uri: str, phone_number: str) -> dict:
                 "No banking profile found for this number. "
                 "Please complete account opening first."
             )
+        log_info(f"Customer account resolved: {row[0]} - {row[1]}", "sudo_tenant_id", "sudo_conversation_id")
         return {"accountNumber": row[0], "accountName": row[1]}
     finally:
         engine.dispose()
@@ -350,11 +351,13 @@ def _authenticate(db_uri: str, phone_number: str, intent: str, tenant_id: str = 
                 return {"status": "error", "message": "No banking profile found for this number. Please register first."}
             row = df.iloc[0]
             if row.get("authenticated", False):
+                log_info(f"User {phone_number} already authenticated", tenant_id, "sys")
                 return {"status": "authenticated", "message": "OK"}
             
             app_url = APP_BASE_URL.rstrip('/') + "/banking"
 
             token = _generate_django_token(engine, int(row["id"])) # Also secure reset links
+            log_info(f"Authentication required for phone {phone_number}. Generated token: {token}", tenant_id, "sys")
             return {
                 "status": "action_required",
                 "message": (
@@ -376,7 +379,7 @@ def _authenticate(db_uri: str, phone_number: str, intent: str, tenant_id: str = 
             }
         
         token = _generate_django_token(engine, int(row["id"])) # Use token for standard logins too
-        log_info(f"Authentication required for phone {phone_number}", tenant_id, "sys")
+        log_info(f"Authentication Aluje required for phone {phone_number}", tenant_id, "sys")
         return {
             "status": "action_required",
             "message": (
@@ -502,7 +505,7 @@ def _upsert_saved_biller(
             )
             conn.commit()
     except Exception as exc:
-        log_error(f"_upsert_saved_biller failed: {exc}")
+        log_error(f"_upsert_saved_biller failed: {exc}", "sudo_tenant_id", "sudo_conversation_id"   )
     finally:
         engine.dispose()
 
@@ -2114,25 +2117,30 @@ def balance_enquiry_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
 
         profile = _get_customer_account(db_uri, phone_number)
         headers = _wallet_headers()
-
+        log_info(f"Fetching balance for account {profile['accountNumber']} with headers {headers}", tenant_id, conversation_id)
         resp = requests.get(
             f"{WALLET_BASE_URL}/account/enquiry",
             params={"accountNumber": profile["accountNumber"]},
             headers=headers,
             timeout=20,
         )
+        
+        
         data = resp.json()
         log_info(f"VFD balance response status: {data.get('status')}", tenant_id, conversation_id)
-
+        log_info(f"VFD balance response message: {data}", tenant_id, conversation_id)
         if data.get("status") != "00":
             return f"Balance enquiry failed: {data.get('message', 'Unknown error')}."
 
-        balance = data.get("data", {}).get("balance", "N/A")
+        balance = data.get("data", {}).get("accountBalance", "N/A")
+        client = data.get("data", {}).get("client", "N/A")
+        log_info(f"Retrieved balance: {balance} client: {client}", tenant_id, conversation_id)
         return (
             f"💰 Account Balance\n\n"
             f"  Account : {profile['accountNumber']} (VFD Bank)\n"
             f"  Name    : {profile['accountName']}\n"
             f"  Balance : ₦{balance}"
+            f"  Client  : {client}"
         )
 
     except Exception as exc:
@@ -2175,10 +2183,12 @@ def buy_airtime_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
         db_uri = runtime.context.db_uri
         auth = _authenticate(db_uri, phone_number, "resume_airtime", tenant_id)
         if auth["status"] != "authenticated":
+            log_info(f"Authentication failed for {phone_number}: {auth['message']}", tenant_id, conversation_id)
             return auth["message"]
 
         target_phone = phone_number if recipient_type == "self" else benef_phone
         if not target_phone:
+            log_info("Beneficiary phone number missing for third-party airtime purchase.", tenant_id, conversation_id)
             return "Please provide the beneficiary's phone number for a third-party airtime purchase."
 
         biller_info = _resolve_biller(str(db_uri), str(tenant_id), str(network))
@@ -2424,8 +2434,9 @@ def transfer_money_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
 
         auth = _authenticate(db_uri, phone_number, "resume_transfer", tenant_id)
         if auth["status"] != "authenticated":
+            log_info(f"Authentication failed for {phone_number}: {auth['message']}", tenant_id, conversation_id)
             return auth["message"]
-
+        log_info(f"Authentication successful for {phone_number}", tenant_id, conversation_id)
         headers = _wallet_headers()
 
         # Step 1 – sender account enquiry
@@ -2598,8 +2609,9 @@ def buy_data_tool(runtime: ToolRuntime[Context], **kwargs) -> str:
         db_uri = runtime.context.db_uri
         auth = _authenticate(db_uri, phone_number, "resume_buy_data", tenant_id)
         if auth["status"] != "authenticated":
+            log_info(f"Authentication failed for {phone_number}: {auth['message']}", tenant_id, conversation_id)
             return auth["message"]
-
+        log_info(f"Authentication successful for {phone_number}", tenant_id, conversation_id)
         biller_info = _resolve_biller(str(db_uri), str(tenant_id), str(network))
         reference   = _unique_ref()
         headers     = _wallet_headers()
