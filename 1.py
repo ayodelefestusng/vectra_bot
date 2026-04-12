@@ -1,260 +1,48 @@
-{
-    "hr_policy": {
-        "tools": ["pdf_retrieval_tool"],
-        "triggers": ["policy", "handbook", "benefits", "hr guide", "rules"],
-    },
-    "change_pin": {
-        "tools": ["change_pin_tool"],
-        "triggers": [
-            "change pin",
-            "update pin",
-            "new pin",
-            "change my pin",
-            "update my pin",
-        ],
-    },
-    "forgot_pin": {
-        "note": "B0 authentication NOT required — customer may be locked out.",
-        "tools": ["forgot_pin_tool"],
-        "triggers": [
-            "forgot pin",
-            "lost pin",
-            "can't remember pin",
-            "recover pin",
-            "reset pin",
-            "liveness",
-            "nin verification",
-        ],
-    },
-    "fund_wallet": {
-        "tools": ["fund_wallet_info_tool"],
-        "triggers": [
-            "fund wallet",
-            "top up",
-            "deposit",
-            "add money",
-            "fund my account",
-            "how to fund",
-            "bank details",
-        ],
-    },
-    "recruitment": {
-        "tools": ["search_job_opportunities_tool"],
-        "triggers": ["job", "vacancy", "career", "hiring", "position"],
-    },
-    "bills_payment": {
-        "tools": [
-            "pay_bill_tool",
-            "get_saved_billers_tool",
-            "delete_saved_biller_tool",
-        ],
-        "triggers": [
-            "pay bill",
-            "bills",
-            "electricity",
-            "dstv",
-            "gotv",
-            "startimes",
-            "cable tv",
-            "nepa",
-            "ekedc",
-            "ikedc",
-            "meter",
-            "smart card",
-            "internet subscription",
-            "betting",
-            "waec",
-        ],
-    },
-    "money_transfer": {
-        "tools": [
-            "transfer_money_tool",
-            "get_beneficiary_name_tool",
-            "get_bank_list_tool",
-        ],
-        "triggers": [
-            "transfer",
-            "send money",
-            "wire",
-            "pay someone",
-            "bank transfer",
-            "inter-bank",
-            "intra-bank",
-            "beneficiary",
-        ],
-    },
-    "account_opening": {
-        "note": "B0 authentication NOT required for this step.",
-        "tools": ["create_customer_profile_tool"],
-        "triggers": [
-            "open account",
-            "create account",
-            "new account",
-            "register",
-            "sign up",
-            "onboard",
-            "account opening",
-            "get an account",
-        ],
-    },
-    "balance_enquiry": {
-        "tools": ["balance_enquiry_tool"],
-        "triggers": [
-            "balance",
-            "check balance",
-            "account balance",
-            "how much do i have",
-            "wallet balance",
-        ],
-    },
-    "forgot_password": {
-        "note": "3-step flow: initiate → confirm (₦10 debit + OTP) → verify OTP → issue link. OTP expires in 10 seconds. B0 NOT required.",
-        "tools": [
-            "initiate_password_reset_tool",
-            "confirm_password_reset_tool",
-            "verify_otp_and_issue_link_tool",
-        ],
-        "triggers": [
-            "forgot password",
-            "reset password",
-            "lost password",
-            "can't login",
-            "locked out",
-            "password reset",
-            "otp",
-            "one time password",
-            "sms code",
-        ],
-    },
-    "general_inquiry": {
-        "tools": ["web_search_tool"],
-        "triggers": ["what is", "how to", "who is", "search"],
-    },
-    "profile_updates": {
-        "tools": [
-            "update_employee_profile_tool",
-            "create_customer_profile_tool",
-            "get_customer_details_tool",
-        ],
-        "triggers": ["update", "profile", "phone number", "bank account", "details"],
-    },
-    "airtime_purchase": {
-        "tools": ["buy_airtime_tool"],
-        "triggers": [
-            "airtime",
-            "buy airtime",
-            "recharge",
-            "top up phone",
-            "data",
-            "mtn",
-            "airtel",
-            "glo",
-            "9mobile",
-            "etisalat",
-        ],
-    },
-    "leave_management": {
-        "tools": [
-            "fetch_available_leave_types_tool",
-            "prepare_leave_application_tool",
-            "submit_leave_application_tool",
-            "fetch_leave_status_tool",
-            "calculate_num_of_days_tool",
-        ],
-        "triggers": [
-            "leave",
-            "vacation",
-            "sick leave",
-            "day off",
-            "approve",
-            "leave balance",
-            "resumption",
-        ],
-    },
-    "loan_application": {
-        "note": "Requires eligibility score > 70. Default tier is Bronze. Loan amount must not exceed customer loan limit. Customer must have zero outstanding loan balance.",
-        "tools": ["apply_for_loan_tool"],
-        "triggers": [
-            "apply for loan",
-            "get a loan",
-            "borrow money",
-            "take a loan",
-            "loan application",
-            "request loan",
-            "need a loan",
-            "how much can i borrow",
-        ],
-    },
-    "loan_eligibility": {
-        "note": "Social media URLs must pass 'validate_social_media_tool' before being passed to 'evaluate_loan_eligibility_tool'. Cached results used if < 180 days old.",
-        "tools": ["validate_social_media_tool", "evaluate_loan_eligibility_tool"],
-        "triggers": [
-            "loan eligibility",
-            "can i get a loan",
-            "check eligibility",
-            "credit check",
-            "credit score",
-            "social media check",
-            "qualify for loan",
-            "am i eligible",
-        ],
-    },
-    "payslip_services": {
-        "tools": ["get_payslip_tool"],
-        "triggers": ["payslip", "salary", "pay statement", "earnings", "payroll"],
-    },
-    "travel_concierge": {
-        "tools": ["search_travel_deals_tool"],
-        "triggers": ["flight", "hotel", "travel", "booking", "trip"],
-    },
-    "data_visualization": {
-        "tools": ["sql_query_tool", "generate_visualization_tool"],
-        "triggers": [
-            "plot",
-            "chart",
-            "graph",
-            "visualize",
-            "show as a bar chart",
-            "report",
-            "count",
-            "average",
-            "total",
-            "statistics",
-            "data",
-        ],
-    },
-    "customer_authentication": {
-        "note": "Must be called before any banking service request (B2–B10).",
-        "tools": ["authenticate_customer_tool"],
-        "triggers": [
-            "login",
-            "sign in",
-            "access account",
-            "banking services",
-            "password",
-            "enter password",
-            "verify identity",
-            "authenticate",
-        ],
-    },
-    "social_media_validation": {
-        "note": "Can also be called standalone if a customer wants to check a URL.",
-        "tools": ["validate_social_media_tool"],
-        "triggers": [
-            "validate url",
-            "check profile",
-            "verify social media",
-            "facebook link",
-            "linkedin link",
-            "instagram link",
-            "twitter link",
-            "tiktok link",
-        ],
-    },
-}
+2026-04-12 20:22:18,143 [INFO] uvicorn.error:shutdown:67 - Waiting for application shutdown.
+2026-04-12 20:22:18,144 [INFO] uvicorn.error:shutdown:76 - Application shutdown complete.
+2026-04-12 20:22:18,145 [INFO] uvicorn.error:_serve:102 - Finished server process [1]
 
-
-
-# The paylod of evolution webhook request contains a lot of information about the message and sender. Here is an example of the payload structure:
-
-{'remoteJid': '2348021299221@s.whatsapp.net', 'remoteJidAlt': '2348021299221@s.whatsapp.net', 'fromMe': False, 'id': 'AC6FC776163B0257076CE58F73B6E805', 'participant': '', 'addressingMode': 'lid'}, 'pushName': 'Ayodele Adeyinka', 'status': 'DELIVERY_ACK', 'message': {'conversation': 'I need Airtime Airtel for myself 700', 'messageContextInfo': {'threadId': [], 'deviceListMetadata': {'senderKeyIndexes': [], 'recipientKeyIndexes': [], 'senderKeyHash': {'0': 202, '1': 204, '2': 138, '3': 189, '4': 250, '5': 67, '6': 207, '7': 221, '8': 147, '9': 250}, 'senderTimestamp': {'low': 1774552159, 'high': 0, 'unsigned': True}, 'recipientKeyHash': {'0': 130, '1': 228, '2': 83, '3': 161, '4': 126, '5': 111, '6': 23, '7': 137, '8': 76, '9': 55}, 'recipientTimestamp': {'low': 1774886066, 'high': 0, 'unsigned': True}}, 'deviceListMetadataVersion': 2, 'messageSecret': {'0': 150, '1': 160, '2': 254, '3': 45, '4': 176, '5': 30, '6': 15, '7': 206, '8': 73, '9': 86, '10': 47, '11': 42, '12': 148, '13': 71, '14': 108, '15': 82, '16': 40, '17': 62, '18': 177, '19': 45, '20': 44, '21': 124, '22': 228, '23': 84, '24': 118, '25': 98, '26': 4, '27': 55, '28': 28, '29': 49, '30': 247, '31': 94}}}, 'messageType': 'conversation', 'messageTimestamp': 1775618490, 'instanceId': '712a4424-63a3-449b-8c7f-77488faf46f4', 'source': 'android'}
+2026-04-12 20:22:25,242 [DEBUG] matplotlib:wrapper:342 - matplotlib data path: /app/.venv/lib/python3.13/site-packages/matplotlib/mpl-data
+2026-04-12 20:22:25,248 [DEBUG] matplotlib:wrapper:342 - CONFIGDIR=/root/.config/matplotlib
+2026-04-12 20:22:25,249 [DEBUG] matplotlib:<module>:1560 - interactive is False
+2026-04-12 20:22:25,249 [DEBUG] matplotlib:<module>:1561 - platform is linux
+2026-04-12 20:22:25,465 [DEBUG] matplotlib:wrapper:342 - CACHEDIR=/root/.cache/matplotlib
+2026-04-12 20:22:25,465 [DEBUG] matplotlib.font_manager:__init__:1085 - font search path [PosixPath('/app/.venv/lib/python3.13/site-packages/matplotlib/mpl-data/fonts/ttf'), PosixPath('/app/.venv/lib/python3.13/site-packages/matplotlib/mpl-data/fonts/afm'), PosixPath('/app/.venv/lib/python3.13/site-packages/matplotlib/mpl-data/fonts/pdfcorefonts')]
+2026-04-12 20:22:25,632 [INFO] matplotlib.font_manager:_load_fontmanager:1639 - generated new fontManager
+2026-04-12 20:22:26,673 [INFO] HR_AGENT:log_info:27 - [Tenant: sudo_tenant_id | Conversation: sudo_conversation_id] _get_access_token  called
+2026-04-12 20:22:26,675 [DEBUG] urllib3.connectionpool:_new_conn:1049 - Starting new HTTPS connection (1): api-devapps.vfdbank.systems:443
+2026-04-12 20:22:27,181 [DEBUG] urllib3.connectionpool:_make_request:544 - https://api-devapps.vfdbank.systems:443 "POST /vfd-tech/baas-portal/v1.1/baasauth/token HTTP/1.1" 200 None
+2026-04-12 20:22:27,242 [INFO] HR_AGENT:log_info:27 - [Tenant: sytem | Conversation: sytem] Attempting to create instance: instagram_bot
+2026-04-12 20:22:27,243 [DEBUG] urllib3.connectionpool:_new_conn:1049 - Starting new HTTPS connection (1): whatsapp-1-evolution-api.xqqhik.easypanel.host:443
+2026-04-12 20:22:27,431 [DEBUG] urllib3.connectionpool:_make_request:544 - https://whatsapp-1-evolution-api.xqqhik.easypanel.host:443 "POST /instance/create HTTP/1.1" 400 83
+2026-04-12 20:22:27,432 [ERROR] HR_AGENT:log_error:30 - [Tenant: system | Conversation: system] Failed to create instance. Status: 400, Response: {'status': 400, 'error': 'Bad Request', 'response': {'message': ['Invalid integration']}}
+2026-04-12 20:22:27,436 [DEBUG] urllib3.connectionpool:_new_conn:1049 - Starting new HTTPS connection (1): whatsapp-1-evolution-api.xqqhik.easypanel.host:443
+2026-04-12 20:22:27,459 [DEBUG] urllib3.connectionpool:_make_request:544 - https://whatsapp-1-evolution-api.xqqhik.easypanel.host:443 "POST /webhook/set/instagram_bot HTTP/1.1" 404 107
+2026-04-12 20:22:27,459 [ERROR] root:setup_webhookv1:374 - Failed to set webhook. Status: 404
+2026-04-12 20:22:27,460 [ERROR] root:setup_webhookv1:375 - Response: {'status': 404, 'error': 'Not Found', 'response': {'message': ['The "instagram_bot" instance does not exist']}}
+             Importing from /
+ 
+    module   📁 app            
+             ├── 🐍 __init__.py
+             └── 🐍 main.py    
+ 
+      code   Importing the FastAPI app object from the module with the following
+             code:                                                              
+ 
+             from app.main import app
+ 
+       app   Using import string: app.main:app
+ 
+    server   Server started at http://0.0.0.0:80
+    server   Documentation at http://0.0.0.0:80/docs
+ 
+             Logs:
+ 
+      INFO   Started server process [1]
+2026-04-12 20:22:27,559 [INFO] uvicorn.error:_serve:92 - Started server process [1]
+2026-04-12 20:22:27,560 [INFO] uvicorn.error:startup:48 - Waiting for application startup.
+      INFO   Waiting for application startup.
+      INFO   Application startup complete.
+2026-04-12 20:22:27,561 [INFO] uvicorn.error:startup:62 - Application startup complete.
+      INFO   Uvicorn running on http://0.0.0.0:80 (Press CTRL+C to quit)
+2026-04-12 20:22:27,562 [INFO] uvicorn.error:_log_started_message:224 - Uvicorn running on http://0.0.0.0:80 (Press CTRL+C to quit)
