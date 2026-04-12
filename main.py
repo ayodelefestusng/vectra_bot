@@ -223,7 +223,7 @@ def setup_webhook():
     except Exception as e:
         logging.error(f"An error occurred during setup: {e}")
 
-# Call the setup
+# Call the setup   
 setup_webhook()
 
 def send_whatsapp_message_wrond__deployed(number: str, text: str):
