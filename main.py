@@ -240,7 +240,7 @@ def create_instance():
     }
 
     try:
-        log_info(f"Attempting creation with payload: {payload}", "system", "system")
+        log_info(f"Attempting creation with payload ALUUKE: {payload}", "system", "system")
         response = requests.post(url, json=payload, headers=headers, timeout=15)
         res_data = response.json()
 
@@ -274,94 +274,6 @@ def create_instance():
 
     except Exception as e:
         log_error(f"Error creating instance: {e}", "system", "system")
-        return False
-def init_evolution_instancev2():
-    """
-    Step 1: Create the instance (Instagram integration).
-    Step 2: Set the webhook.
-    """
-    headers = {
-        "apikey": API_KEY,
-        "Content-Type": "application/json"
-    }
-
-    # --- 1. Create Instance ---
-    create_url = f"{EVOLUTION_API_URLS}/instance/create"
-    create_payload = {
-        "instanceName": INSTAGRAM_INSTANCE,
-        "token": API_KEY,
-        "integration": "INSTAGRAM", # This is vital for Instagram
-        "qrcode": True
-    }
-
-    try:
-        log_info(f"Attempting to create instance: {INSTAGRAM_INSTANCE}","sytem","sytem")
-        create_res = requests.post(create_url, json=create_payload, headers=headers, timeout=10)
-        create_data = create_res.json()
-
-        if create_res.status_code in [200, 201]:
-            log_info(f"Successfully created instance: {INSTAGRAM_INSTANCE}","system","system")
-        elif "already exists" in str(create_data).lower():
-            log_error(f"Instance '{INSTAGRAM_INSTANCE}' already exists, skipping creation.","system","system")
-        else:
-            log_error(f"Failed to create instance. Status: {create_res.status_code}, Response: {create_data}","system","system")
-            return # Don't try to set webhook if instance creation failed
-
-        # --- 2. Set Webhook ---
-        webhook_url = f"{EVOLUTION_API_URLS}/webhook/set/{INSTAGRAM_INSTANCE}"
-        webhook_payload = {
-            "url": WEBHOOK_URL,
-            "enabled": True,
-            "events": ["MESSAGES_UPSERT", "MESSAGES_UPDATE"]
-        }
-
-        log_info(f"Setting webhook for {INSTAGRAM_INSTANCE}...","system","system")
-        webhook_res = requests.post(webhook_url, json=webhook_payload, headers=headers, timeout=10)
-        
-        if webhook_res.status_code in [200, 201]:
-            log_info("Webhook successfully configured.","system","system")
-        else:
-            log_error(f"Webhook config failed: {webhook_res.status_code} - {webhook_res.text}","system","system")
-
-    except requests.exceptions.RequestException as e:
-        log_error(f"Network error connecting to Evolution API: {e}","system","system")
-    except Exception as e:
-        log_error(f"Unexpected error during Evolution setup: {e}","system","system")
-
-# Call this during your FastAPI startup or main block
-init_evolution_instancev2()
-def create_instancev2():
-    """Creates the Instagram instance if it doesn't exist."""
-    url = f"{EVOLUTION_API_URLS}/instance/create"
-    headers = {
-        "apikey": API_KEY,
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "instanceName": INSTAGRAM_INSTANCE,
-        "token": API_KEY, # Optional: sets the instance-specific token
-        "integration": "META-INSTAGRAM", # Crucial for Instagram bots
-        "qrcode": True
-    }
-
-    try:
-        log_info(f"Payload '{payload}' .", "system", "system")
-
-        response = requests.post(url, json=payload, headers=headers)
-        log_info(f"Raw Response: '{response}' .", "system", "system")
-        res_data = response.json()
-
-        if response.status_code in [200, 201]:
-            log_info(f"Instance '{INSTAGRAM_INSTANCE}' created successfully.", "system", "system")
-            return True
-        elif "already exists" in str(res_data.get("response", "")):
-            log_info(f"Instance '{INSTAGRAM_INSTANCE}' already exists.", "system", "system")
-            return True
-        else:
-            log_info(f"Failed to create instance: {res_data}", "system", "system")
-            return False
-    except Exception as e:
-        log_info(f"Error creating instance: {e}", "system", "system")
         return False
 
 def setup_webhook():
@@ -402,37 +314,6 @@ if __name__ == "__main__":
         # Step 2: Set the webhook
         setup_webhook()
 
-def setup_webhookv1():
-    url = f"{EVOLUTION_API_URLS}/webhook/set/{INSTAGRAM_INSTANCE}"
-    headers = {
-        "apikey": API_KEY,
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "url": EVOLUTION_API_URL,
-        "enabled": True,
-        "events": [
-            "MESSAGES_UPSERT",
-            "MESSAGES_UPDATE"
-        ]
-    }
-
-    try:
-        response = requests.post(url, json=payload, headers=headers)
-        res_data = response.json()
-        
-        if response.status_code == 200 or response.status_code == 201:
-            logging.info("Webhook configured successfully.")
-        else:
-            # This is where your current 404 error is caught
-            logging.error(f"Failed to set webhook. Status: {response.status_code}")
-            logging.error(f"Response: {res_data}")
-            
-    except Exception as e:
-        logging.error(f"An error occurred during setup: {e}")
-
-# Call the setup   5555
-setup_webhookv1()
 
 def send_whatsapp_message_wrond__deployed(number: str, text: str):
     url = f"{EVOLUTION_API_URL}/message/send"
