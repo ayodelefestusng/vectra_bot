@@ -634,6 +634,42 @@ async def whatsapp_webhook(request: Request):
         log_error(f"Error in webhook: {e}", "unknown", "unknown")
         raise HTTPException(status_code=500, detail=str(e))
 
+#Instagram
+def send_instagram_message(recipient: str, text: str):
+    url = f"{EVOLUTION_API_URL}/message/sendText/{INSTAGRAM_INSTANCE}"
+    headers = {
+        "apikey": EVOLUTION_API_KEY,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "to": recipient,   # Instagram user ID
+        "text": text
+    }
+    response = requests.post(url, json=payload, headers=headers)
+    return response.json()
+
+
+@app.post("/webhook/instagram")
+async def instagram_webhook(request: Request):
+    data = await request.json()
+    print("Instagram incoming:", data)
+
+    if "messages" in data:
+        for msg in data["messages"]:
+            sender = msg["from"]
+            text = msg.get("text", "")
+
+            if text:
+                send_instagram_message(sender, f"You said: {text}")
+
+    return {"status": "ok"}
+
+
+
+
+
+
+
 @app.post("/webhook2")
 async def whatsapp_webhook2(payload: WebhookPayload):
     # Now you can access JSON fields directly
