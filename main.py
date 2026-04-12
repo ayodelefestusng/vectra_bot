@@ -181,6 +181,7 @@ redis_client = redis.Redis.from_url(REDIS_URL)
 EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL", "http://whatsapp-1_evolution-api:8080")
 EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY")
 EVOLUTION_INSTANCE = os.getenv("EVOLUTION_INSTANCE", "session1")
+INSTAGRAM_INSTANCE = os.getenv("INSTAGRAM_INSTANCE", "instagram_bot")
 def send_whatsapp_message_wrond__deployed(number: str, text: str):
     url = f"{EVOLUTION_API_URL}/message/send"
     headers = {"Authorization": f"Bearer {EVOLUTION_API_KEY}"}
