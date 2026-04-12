@@ -637,6 +637,7 @@ async def whatsapp_webhook(request: Request):
 
 #Instagram
 def send_instagram_message(recipient: str, text: str):
+    log_info(f"Sending Instagram message to {recipient}: {text}", "system", "system")
     url = f"{EVOLUTION_API_URL}/message/sendText/{INSTAGRAM_INSTANCE}"
     headers = {
         "apikey": EVOLUTION_API_KEY,
@@ -652,8 +653,9 @@ def send_instagram_message(recipient: str, text: str):
 
 @app.post("/webhook/instagram")
 async def instagram_webhook(request: Request):
+    log_info("Received Instagram webhook request", "unknown", "unknown")
     data = await request.json()
-    print("Instagram incoming:", data)
+    log_info(f"Instagram webhook data: {data}", "unknown", "unknown")
 
     if "messages" in data:
         for msg in data["messages"]:
@@ -662,7 +664,7 @@ async def instagram_webhook(request: Request):
 
             if text:
                 send_instagram_message(sender, f"You said: {text}")
-
+    log_info("Finished processing Instagram webhook", "unknown", "unknown")
     return {"status": "ok"}
 
 
