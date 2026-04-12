@@ -208,6 +208,74 @@ WEBHOOK_URL = "https://whatsapp-1-rr.xqqhik.easypanel.host/webhook/instagram"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+
+import requests
+import logging
+
+# Configuration - Ensure these match your Easypanel setup
+# EVOLUTION_BASE_URL = "https://whatsapp-1-evolution-api.xqqhik.easypanel.host"
+# API_KEY = "429683C4C977415CAAFCCE10F7D57E11"
+# INSTAGRAM_INSTANCE = "instagram_bot"
+# WEBHOOK_URL = "https://whatsapp-1-rr.xqqhik.easypanel.host/webhook/instagram"
+
+# logger = logging.getLogger("HR_AGENT")
+
+def init_evolution_instance():
+    """
+    Step 1: Create the instance (Instagram integration).
+    Step 2: Set the webhook.
+    """
+    headers = {
+        "apikey": API_KEY,
+        "Content-Type": "application/json"
+    }
+
+    # --- 1. Create Instance ---
+    create_url = f"{EVOLUTION_BASE_URL}/instance/create"
+    create_payload = {
+        "instanceName": INSTAGRAM_INSTANCE,
+        "token": API_KEY,
+        "integration": "INSTAGRAM", # This is vital for Instagram
+        "qrcode": True
+    }
+
+    try:
+        log_info(f"Attempting to create instance: {INSTAGRAM_INSTANCE}","sytem","sytem")
+        create_res = requests.post(create_url, json=create_payload, headers=headers, timeout=10)
+        create_data = create_res.json()
+
+        if create_res.status_code in [200, 201]:
+            log_info(f"Successfully created instance: {INSTAGRAM_INSTANCE}","system","system")
+        elif "already exists" in str(create_data).lower():
+            log_error(f"Instance '{INSTAGRAM_INSTANCE}' already exists, skipping creation.","system","system")
+        else:
+            log_error(f"Failed to create instance. Status: {create_res.status_code}, Response: {create_data}","system","system")
+            return # Don't try to set webhook if instance creation failed
+
+        # --- 2. Set Webhook ---
+        webhook_url = f"{EVOLUTION_BASE_URL}/webhook/set/{INSTAGRAM_INSTANCE}"
+        webhook_payload = {
+            "url": WEBHOOK_URL,
+            "enabled": True,
+            "events": ["MESSAGES_UPSERT", "MESSAGES_UPDATE"]
+        }
+
+        log_info(f"Setting webhook for {INSTAGRAM_INSTANCE}...","system","system")
+        webhook_res = requests.post(webhook_url, json=webhook_payload, headers=headers, timeout=10)
+        
+        if webhook_res.status_code in [200, 201]:
+            log_info("Webhook successfully configured.","system","system")
+        else:
+            log_error(f"Webhook config failed: {webhook_res.status_code} - {webhook_res.text}","system","system")
+
+    except requests.exceptions.RequestException as e:
+        log_error(f"Network error connecting to Evolution API: {e}","system","system")
+    except Exception as e:
+        log_error(f"Unexpected error during Evolution setup: {e}","system","system")
+
+# Call this during your FastAPI startup or main block
+init_evolution_instance()
 def create_instance():
     """Creates the Instagram instance if it doesn't exist."""
     url = f"{EVOLUTION_BASE_URL}/instance/create"
