@@ -182,6 +182,50 @@ EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL", "http://whatsapp-1_evolution-
 EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY")
 EVOLUTION_INSTANCE = os.getenv("EVOLUTION_INSTANCE", "session1")
 INSTAGRAM_INSTANCE = os.getenv("INSTAGRAM_INSTANCE", "instagram_bot")
+EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL", "https://whatsapp-1-evolution-api.xqqhik.easypanel.host")
+
+
+
+import requests
+import logging
+
+# Configuration
+EVOLUTION_BASE_URL = EVOLUTION_API_URL
+API_KEY = EVOLUTION_API_KEY
+INSTAGRAM_INSTANCE = "instagram_bot"
+
+def setup_webhook():
+    url = f"{EVOLUTION_BASE_URL}/webhook/set/{INSTAGRAM_INSTANCE}"
+    headers = {
+        "apikey": API_KEY,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "url": EVOLUTION_API_URL,
+        "enabled": True,
+        "events": [
+            "MESSAGES_UPSERT",
+            "MESSAGES_UPDATE"
+        ]
+    }
+
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        res_data = response.json()
+        
+        if response.status_code == 200 or response.status_code == 201:
+            logging.info("Webhook configured successfully.")
+        else:
+            # This is where your current 404 error is caught
+            logging.error(f"Failed to set webhook. Status: {response.status_code}")
+            logging.error(f"Response: {res_data}")
+            
+    except Exception as e:
+        logging.error(f"An error occurred during setup: {e}")
+
+# Call the setup
+setup_webhook()
+
 def send_whatsapp_message_wrond__deployed(number: str, text: str):
     url = f"{EVOLUTION_API_URL}/message/send"
     headers = {"Authorization": f"Bearer {EVOLUTION_API_KEY}"}
