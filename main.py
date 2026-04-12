@@ -291,7 +291,10 @@ def create_instance():
     }
 
     try:
+        log_info(f"Payload '{payload}' .", "system", "system")
+
         response = requests.post(url, json=payload, headers=headers)
+        log_info(f"Raw Response: '{response}' .", "system", "system")
         res_data = response.json()
 
         if response.status_code in [200, 201]:
