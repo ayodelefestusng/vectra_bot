@@ -332,7 +332,7 @@ def init_evolution_instancev2():
 init_evolution_instancev2()
 def create_instancev2():
     """Creates the Instagram instance if it doesn't exist."""
-    url = f"{EVOLUTION_BASE_URL}/instance/create"
+    url = f"{EVOLUTION_API_URLS}/instance/create"
     headers = {
         "apikey": API_KEY,
         "Content-Type": "application/json"
@@ -367,7 +367,7 @@ def create_instancev2():
 def setup_webhook():
     """Configures the webhook for the existing instance."""
     log_info("Setting up webhook for Instagram instance", "system", "system")
-    url = f"{EVOLUTION_BASE_URL}/webhook/set/{INSTAGRAM_INSTANCE}"
+    url = f"{EVOLUTION_API_URLS}/webhook/set/{INSTAGRAM_INSTANCE}"
     headers = {
         "apikey": API_KEY,
         "Content-Type": "application/json"
@@ -403,7 +403,7 @@ if __name__ == "__main__":
         setup_webhook()
 
 def setup_webhookv1():
-    url = f"{EVOLUTION_BASE_URL}/webhook/set/{INSTAGRAM_INSTANCE}"
+    url = f"{EVOLUTION_API_URLS}/webhook/set/{INSTAGRAM_INSTANCE}"
     headers = {
         "apikey": API_KEY,
         "Content-Type": "application/json"
