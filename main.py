@@ -286,7 +286,7 @@ def create_instance():
     payload = {
         "instanceName": INSTAGRAM_INSTANCE,
         "token": API_KEY, # Optional: sets the instance-specific token
-        "integration": "INSTAGRAM", # Crucial for Instagram bots
+        "integration": "instagram", # Crucial for Instagram bots
         "qrcode": True
     }
 
